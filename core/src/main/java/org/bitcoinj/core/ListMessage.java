@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2011 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,6 @@ import java.util.List;
  * Abstract superclass of classes with list based payload, ie InventoryMessage and GetDataMessage.
  */
 public abstract class ListMessage extends Message {
-    private static final long serialVersionUID = -4275896329391143643L;
 
     private long arrayLen;
     // For some reason the compiler complains if this is inside InventoryItem
@@ -116,7 +115,7 @@ public abstract class ListMessage extends Message {
             // Write out the type code.
             Utils.uint32ToByteStreamLE(i.type.ordinal(), stream);
             // And now the hash.
-            stream.write(Utils.reverseBytes(i.hash.getBytes()));
+            stream.write(i.hash.getReversedBytes());
         }
     }
 
@@ -124,8 +123,7 @@ public abstract class ListMessage extends Message {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        ListMessage other = (ListMessage) o;
-        return items.equals(other.items);
+        return items.equals(((ListMessage)o).items);
     }
 
     @Override

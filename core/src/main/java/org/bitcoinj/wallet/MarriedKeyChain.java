@@ -91,7 +91,7 @@ public class MarriedKeyChain extends DeterministicKeyChain {
         }
 
         public MarriedKeyChain build() {
-            checkState(random != null || entropy != null || seed != null, "Must provide either entropy or random");
+            checkState(random != null || entropy != null || seed != null || watchingKey!= null, "Must provide either entropy or random or seed or watchingKey");
             checkNotNull(followingKeys, "followingKeys must be provided");
             MarriedKeyChain chain;
             if (threshold == 0)
@@ -100,8 +100,10 @@ public class MarriedKeyChain extends DeterministicKeyChain {
                 chain = new MarriedKeyChain(random, bits, getPassphrase(), seedCreationTimeSecs);
             } else if (entropy != null) {
                 chain = new MarriedKeyChain(entropy, getPassphrase(), seedCreationTimeSecs);
-            } else {
+            } else if (seed != null) {
                 chain = new MarriedKeyChain(seed);
+            } else {
+                chain = new MarriedKeyChain(watchingKey, seedCreationTimeSecs);
             }
             chain.addFollowingAccountKeys(followingKeys, threshold);
             return chain;
@@ -115,6 +117,10 @@ public class MarriedKeyChain extends DeterministicKeyChain {
     // Protobuf deserialization constructors
     MarriedKeyChain(DeterministicKey accountKey) {
         super(accountKey, false);
+    }
+
+    MarriedKeyChain(DeterministicKey accountKey, long seedCreationTimeSecs) {
+        super(accountKey, seedCreationTimeSecs);
     }
 
     MarriedKeyChain(DeterministicSeed seed, KeyCrypter crypter) {
@@ -186,7 +192,7 @@ public class MarriedKeyChain extends DeterministicKeyChain {
         List<DeterministicKeyChain> followingKeyChains = Lists.newArrayList();
 
         for (DeterministicKey key : followingAccountKeys) {
-            checkArgument(key.getPath().size() == 1, "Following keys have to be account keys");
+            checkArgument(key.getPath().size() == getAccountPath().size(), "Following keys have to be account keys");
             DeterministicKeyChain chain = DeterministicKeyChain.watchAndFollow(key);
             if (lookaheadSize >= 0)
                 chain.setLookaheadSize(lookaheadSize);

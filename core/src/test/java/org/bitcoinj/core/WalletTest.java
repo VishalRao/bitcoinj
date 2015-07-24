@@ -352,11 +352,16 @@ public class WalletTest extends TestWithWallet {
         basicSanityChecks(wallet, t2, destination);
 
         // Broadcast the transaction and commit.
+        List<TransactionOutput> unspents1 = wallet.getUnspents();
+        assertEquals(1, unspents1.size());
         broadcastAndCommit(wallet, t2);
+        List<TransactionOutput> unspents2 = wallet.getUnspents();
+        assertNotEquals(unspents1, unspents2.size());
 
         // Now check that we can spend the unconfirmed change, with a new change address of our own selection.
         // (req.aesKey is null for unencrypted / the correct aesKey for encrypted.)
-        spendUnconfirmedChange(wallet, t2, req.aesKey);
+        wallet = spendUnconfirmedChange(wallet, t2, req.aesKey);
+        assertNotEquals(unspents2, wallet.getUnspents());
     }
 
     private void receiveATransaction(Wallet wallet, Address toAddress) throws Exception {
@@ -422,7 +427,7 @@ public class WalletTest extends TestWithWallet {
         assertEquals(1, txns.size());
     }
 
-    private void spendUnconfirmedChange(Wallet wallet, Transaction t2, KeyParameter aesKey) throws Exception {
+    private Wallet spendUnconfirmedChange(Wallet wallet, Transaction t2, KeyParameter aesKey) throws Exception {
         if (wallet.getTransactionSigners().size() == 1)   // don't bother reconfiguring the p2sh wallet
             wallet = roundTrip(wallet);
         Coin v3 = valueOf(0, 49);
@@ -444,6 +449,7 @@ public class WalletTest extends TestWithWallet {
         wallet.receiveFromBlock(t3, bp.storedBlock, AbstractBlockChain.NewBlockType.BEST_CHAIN, 1);
         wallet.notifyNewBestBlock(bp.storedBlock);
         assertTrue(wallet.isConsistent());
+        return wallet;
     }
 
     @Test
@@ -542,8 +548,8 @@ public class WalletTest extends TestWithWallet {
     @Test
     public void blockChainCatchup() throws Exception {
         // Test that we correctly process transactions arriving from the chain, with callbacks for inbound and outbound.
-        final Coin bigints[] = new Coin[4];
-        final Transaction txn[] = new Transaction[2];
+        final Coin[] bigints = new Coin[4];
+        final Transaction[] txn = new Transaction[2];
         final LinkedList<Transaction> confTxns = new LinkedList<Transaction>();
         wallet.addEventListener(new AbstractWalletEventListener() {
             @Override
@@ -926,8 +932,8 @@ public class WalletTest extends TestWithWallet {
     @Test
     public void pending2() throws Exception {
         // Check that if we receive a pending tx we did not send, it updates our spent flags correctly.
-        final Transaction txn[] = new Transaction[1];
-        final Coin bigints[] = new Coin[2];
+        final Transaction[] txn = new Transaction[1];
+        final Coin[] bigints = new Coin[2];
         wallet.addEventListener(new AbstractWalletEventListener() {
             @Override
             public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
@@ -1146,12 +1152,22 @@ public class WalletTest extends TestWithWallet {
         log.info(t2.toString(chain));
     }
 
-    @Test(expected = ECKey.MissingPrivateKeyException.class)
+    @Test
+    public void isWatching() {
+        assertFalse(wallet.isWatching());
+        Wallet watchingWallet = Wallet.fromWatchingKey(params, wallet.getWatchingKey().dropPrivateBytes().dropParent());
+        assertTrue(watchingWallet.isWatching());
+        wallet.encrypt(PASSWORD1);
+        assertFalse(wallet.isWatching());
+    }
+
+    @Test
     public void watchingWallet() throws Exception {
         DeterministicKey watchKey = wallet.getWatchingKey();
         String serialized = watchKey.serializePubB58(params);
-        watchKey = DeterministicKey.deserializeB58(null, serialized, params);
-        Wallet watchingWallet = Wallet.fromWatchingKey(params, watchKey);
+
+        // Construct watching wallet.
+        Wallet watchingWallet = Wallet.fromWatchingKey(params, DeterministicKey.deserializeB58(null, serialized, params));
         DeterministicKey key2 = watchingWallet.freshReceiveKey();
         assertEquals(myKey, key2);
 
@@ -1159,7 +1175,17 @@ public class WalletTest extends TestWithWallet {
         key2 = watchingWallet.freshKey(KeyChain.KeyPurpose.CHANGE);
         assertEquals(key, key2);
         key.sign(Sha256Hash.ZERO_HASH);
-        key2.sign(Sha256Hash.ZERO_HASH);
+        try {
+            key2.sign(Sha256Hash.ZERO_HASH);
+            fail();
+        } catch (ECKey.MissingPrivateKeyException e) {
+            // Expected
+        }
+
+        receiveATransaction(watchingWallet, myKey.toAddress(params));
+        assertEquals(COIN, watchingWallet.getBalance());
+        assertEquals(COIN, watchingWallet.getBalance(Wallet.BalanceType.AVAILABLE));
+        assertEquals(ZERO, watchingWallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE));
     }
 
     @Test(expected = ECKey.MissingPrivateKeyException.class)
@@ -1198,8 +1224,7 @@ public class WalletTest extends TestWithWallet {
         Transaction t1 = createFakeTx(params, CENT, watchedAddress);
         StoredBlock b3 = createFakeBlock(blockStore, t1).storedBlock;
         wallet.receiveFromBlock(t1, b3, BlockChain.NewBlockType.BEST_CHAIN, 0);
-        assertEquals(ZERO, wallet.getBalance());
-        assertEquals(CENT, wallet.getWatchedBalance());
+        assertEquals(CENT, wallet.getBalance());
 
         // We can't spend watched balances
         Address notMyAddr = new ECKey().toAddress(params);
@@ -1335,17 +1360,17 @@ public class WalletTest extends TestWithWallet {
     public void autosaveImmediate() throws Exception {
         // Test that the wallet will save itself automatically when it changes.
         File f = File.createTempFile("bitcoinj-unit-test", null);
-        Sha256Hash hash1 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash1 = Sha256Hash.of(f);
         // Start with zero delay and ensure the wallet file changes after adding a key.
         wallet.autosaveToFile(f, 0, TimeUnit.SECONDS, null);
         ECKey key = wallet.freshReceiveKey();
-        Sha256Hash hash2 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash2 = Sha256Hash.of(f);
         assertFalse("Wallet not saved after generating fresh key", hash1.equals(hash2));  // File has changed.
 
         Transaction t1 = createFakeTx(params, valueOf(5, 0), key);
         if (wallet.isPendingTransactionRelevant(t1))
             wallet.receivePending(t1, null);
-        Sha256Hash hash3 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash3 = Sha256Hash.of(f);
         assertFalse("Wallet not saved after receivePending", hash2.equals(hash3));  // File has changed again.
     }
 
@@ -1357,7 +1382,7 @@ public class WalletTest extends TestWithWallet {
         final File[] results = new File[2];
         final CountDownLatch latch = new CountDownLatch(3);
         File f = File.createTempFile("bitcoinj-unit-test", null);
-        Sha256Hash hash1 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash1 = Sha256Hash.of(f);
         wallet.autosaveToFile(f, 1, TimeUnit.SECONDS,
                 new WalletFiles.Listener() {
                     @Override
@@ -1373,7 +1398,7 @@ public class WalletTest extends TestWithWallet {
                 }
         );
         ECKey key = wallet.freshReceiveKey();
-        Sha256Hash hash2 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash2 = Sha256Hash.of(f);
         assertFalse(hash1.equals(hash2));  // File has changed immediately despite the delay, as keys are important.
         assertNotNull(results[0]);
         assertEquals(f, results[1]);
@@ -1381,7 +1406,7 @@ public class WalletTest extends TestWithWallet {
 
         Block b0 = createFakeBlock(blockStore).block;
         chain.add(b0);
-        Sha256Hash hash3 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash3 = Sha256Hash.of(f);
         assertEquals(hash2, hash3);  // File has NOT changed yet. Just new blocks with no txns - delayed.
         assertNull(results[0]);
         assertNull(results[1]);
@@ -1389,20 +1414,20 @@ public class WalletTest extends TestWithWallet {
         Transaction t1 = createFakeTx(params, valueOf(5, 0), key);
         Block b1 = createFakeBlock(blockStore, t1).block;
         chain.add(b1);
-        Sha256Hash hash4 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash4 = Sha256Hash.of(f);
         assertFalse(hash3.equals(hash4));  // File HAS changed.
         results[0] = results[1] = null;
 
         // A block that contains some random tx we don't care about.
         Block b2 = b1.createNextBlock(new ECKey().toAddress(params));
         chain.add(b2);
-        assertEquals(hash4, Sha256Hash.hashFileContents(f));  // File has NOT changed.
+        assertEquals(hash4, Sha256Hash.of(f));  // File has NOT changed.
         assertNull(results[0]);
         assertNull(results[1]);
 
         // Wait for an auto-save to occur.
         latch.await();
-        Sha256Hash hash5 = Sha256Hash.hashFileContents(f);
+        Sha256Hash hash5 = Sha256Hash.of(f);
         assertFalse(hash4.equals(hash5));  // File has now changed.
         assertNotNull(results[0]);
         assertEquals(f, results[1]);
@@ -1412,12 +1437,12 @@ public class WalletTest extends TestWithWallet {
         results[0] = results[1] = null;
         ECKey key2 = new ECKey();
         wallet.importKey(key2);
-        assertEquals(hash5, Sha256Hash.hashFileContents(f)); // File has NOT changed.
+        assertEquals(hash5, Sha256Hash.of(f)); // File has NOT changed.
         Transaction t2 = createFakeTx(params, valueOf(5, 0), key2);
         Block b3 = createFakeBlock(blockStore, t2).block;
         chain.add(b3);
         Thread.sleep(2000); // Wait longer than autosave delay. TODO Fix the racyness.
-        assertEquals(hash5, Sha256Hash.hashFileContents(f)); // File has still NOT changed.
+        assertEquals(hash5, Sha256Hash.of(f)); // File has still NOT changed.
         assertNull(results[0]);
         assertNull(results[1]);
     }
@@ -2806,14 +2831,20 @@ public class WalletTest extends TestWithWallet {
 
     @Test
     public void completeTxPartiallySignedWithEmptySig() throws Exception {
-        byte[] emptySig = new byte[]{};
+        byte[] emptySig = {};
         completeTxPartiallySigned(Wallet.MissingSigsMode.USE_OP_ZERO, emptySig);
     }
 
     @Test (expected = ECKey.MissingPrivateKeyException.class)
     public void completeTxPartiallySignedThrows() throws Exception {
-        byte[] emptySig = new byte[]{};
-        completeTxPartiallySigned(Wallet.MissingSigsMode.THROW, emptySig);
+        sendMoneyToWallet(wallet, CENT, wallet.freshReceiveKey(), AbstractBlockChain.NewBlockType.BEST_CHAIN);
+        SendRequest req = SendRequest.emptyWallet(new ECKey().toAddress(params));
+        wallet.completeTx(req);
+        // Delete the sigs
+        for (TransactionInput input : req.tx.getInputs())
+            input.setScriptBytes(new byte[]{});
+        Wallet watching = Wallet.fromWatchingKey(params, wallet.getWatchingKey().dropParent().dropPrivateBytes());
+        watching.completeTx(Wallet.SendRequest.forTx(req.tx));
     }
 
     @Test
@@ -2824,13 +2855,13 @@ public class WalletTest extends TestWithWallet {
 
     @Test
     public void completeTxPartiallySignedMarriedWithEmptySig() throws Exception {
-        byte[] emptySig = new byte[]{};
+        byte[] emptySig = {};
         completeTxPartiallySignedMarried(Wallet.MissingSigsMode.USE_OP_ZERO, emptySig);
     }
 
     @Test (expected = TransactionSigner.MissingSignatureException.class)
     public void completeTxPartiallySignedMarriedThrows() throws Exception {
-        byte[] emptySig = new byte[]{};
+        byte[] emptySig = {};
         completeTxPartiallySignedMarried(Wallet.MissingSigsMode.THROW, emptySig);
     }
 
@@ -2862,7 +2893,7 @@ public class WalletTest extends TestWithWallet {
         assertTrue("Only one of the signatures should be missing/dummy", firstSigIsMissing ^ secondSigIsMissing);
         int localSigIndex = firstSigIsMissing ? 2 : 1;
         int length = input.getScriptSig().getChunks().get(localSigIndex).data.length;
-        assertTrue("Local sig should be present: " + length, length > 70);
+        assertTrue("Local sig should be present: " + length, length >= 70);
     }
 
 
@@ -3047,7 +3078,8 @@ public class WalletTest extends TestWithWallet {
             public boolean signInputs(ProposedTransaction propTx, KeyBag keyBag) {
                 assertEquals(propTx.partialTx.getInputs().size(), propTx.keyPaths.size());
                 List<ChildNumber> externalZeroLeaf = ImmutableList.<ChildNumber>builder()
-                                                        .addAll(DeterministicKeyChain.EXTERNAL_PATH).add(ChildNumber.ZERO).build();
+                        .addAll(DeterministicKeyChain.ACCOUNT_ZERO_PATH)
+                        .addAll(DeterministicKeyChain.EXTERNAL_SUBPATH).add(ChildNumber.ZERO).build();
                 for (TransactionInput input : propTx.partialTx.getInputs()) {
                     List<ChildNumber> keypath = propTx.keyPaths.get(input.getConnectedOutput().getScriptPubKey());
                     assertNotNull(keypath);
@@ -3092,7 +3124,7 @@ public class WalletTest extends TestWithWallet {
 
     @Test(expected = java.lang.IllegalStateException.class)
     public void sendCoinsNoBroadcasterTest() throws InsufficientMoneyException {
-        ECKey key = ECKey.fromPrivate(BigInteger.ONE);
+        ECKey key = ECKey.fromPrivate(BigInteger.TEN);
         Address notMyAddr = key.toAddress(params);
         SendRequest req = SendRequest.to(notMyAddr.getParameters(), key, SATOSHI.multiply(12));
         wallet.sendCoins(req);
@@ -3100,7 +3132,7 @@ public class WalletTest extends TestWithWallet {
 
     @Test
     public void sendCoinsWithBroadcasterTest() throws InsufficientMoneyException {
-        ECKey key = ECKey.fromPrivate(BigInteger.ONE);
+        ECKey key = ECKey.fromPrivate(BigInteger.TEN);
         Address notMyAddr = key.toAddress(params);
         receiveATransactionAmount(wallet, myAddress, Coin.COIN);
         MockTransactionBroadcaster broadcaster = new MockTransactionBroadcaster(wallet);

@@ -16,6 +16,7 @@
 
 package org.bitcoinj.core;
 
+import com.google.common.base.Objects;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.*;
@@ -101,18 +102,23 @@ public class FilteredBlock extends Message {
     }
     
     /**
-     * Provide this FilteredBlock with a transaction which is in its merkle tree
-     * @returns false if the tx is not relevant to this FilteredBlock
+     * Provide this FilteredBlock with a transaction which is in its Merkle tree.
+     * @return false if the tx is not relevant to this FilteredBlock
      */
     public boolean provideTransaction(Transaction tx) throws VerificationException {
         Sha256Hash hash = tx.getHash();
         if (getTransactionHashes().contains(hash)) {
             associatedTransactions.put(hash, tx);
             return true;
-        } else
-            return false;
+        }
+        return false;
     }
-    
+
+    /** Returns the {@link PartialMerkleTree} object that provides the mathematical proof of transaction inclusion in the block. */
+    public PartialMerkleTree getPartialMerkleTree() {
+        return merkleTree;
+    }
+
     /** Gets the set of transactions which were provided using provideTransaction() which match in getTransactionHashes() */
     public Map<Sha256Hash, Transaction> getAssociatedTransactions() {
         return Collections.unmodifiableMap(associatedTransactions);
@@ -127,29 +133,18 @@ public class FilteredBlock extends Message {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-
-        FilteredBlock block = (FilteredBlock) o;
-
-        if (!associatedTransactions.equals(block.associatedTransactions)) return false;
-        if (!header.equals(block.header)) return false;
-        if (!merkleTree.equals(block.merkleTree)) return false;
-
-        return true;
+        FilteredBlock other = (FilteredBlock) o;
+        return associatedTransactions.equals(other.associatedTransactions)
+            && header.equals(other.header) && merkleTree.equals(other.merkleTree);
     }
 
     @Override
     public int hashCode() {
-        int result = header.hashCode();
-        result = 31 * result + merkleTree.hashCode();
-        result = 31 * result + associatedTransactions.hashCode();
-        return result;
+        return Objects.hashCode(associatedTransactions, header, merkleTree);
     }
 
     @Override
     public String toString() {
-        return "FilteredBlock{" +
-                "merkleTree=" + merkleTree +
-                ", header=" + header +
-                '}';
+        return "FilteredBlock{merkleTree=" + merkleTree + ", header=" + header + '}';
     }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2011 Google Inc.
  * Copyright 2014 Andreas Schildbach
  *
@@ -21,12 +21,12 @@ import org.bitcoinj.script.Script;
 import org.bitcoinj.wallet.DefaultRiskAnalysis;
 import org.bitcoinj.wallet.KeyBag;
 import org.bitcoinj.wallet.RedeemData;
+import com.google.common.base.Objects;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.io.Serializable;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.Map;
@@ -40,9 +40,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * transaction as being a module which is wired up to others, the inputs of one have to be wired
  * to the outputs of another. The exceptions are coinbase transactions, which create new coins.
  */
-public class TransactionInput extends ChildMessage implements Serializable {
+public class TransactionInput extends ChildMessage {
     public static final long NO_SEQUENCE = 0xFFFFFFFFL;
-    private static final long serialVersionUID = 2;
     public static final byte[] EMPTY_ARRAY = new byte[0];
 
     // Allows for altering transactions after they were broadcast. Tx replacement is currently disabled in the C++
@@ -57,7 +56,7 @@ public class TransactionInput extends ChildMessage implements Serializable {
     private byte[] scriptBytes;
     // The Script object obtained from parsing scriptBytes. Only filled in on demand and if the transaction is not
     // coinbase.
-    transient private WeakReference<Script> scriptSig;
+    private WeakReference<Script> scriptSig;
     /** Value of the output connected to the input, if known. This field does not participate in equals()/hashCode(). */
     @Nullable
     private Coin value;
@@ -177,7 +176,6 @@ public class TransactionInput extends ChildMessage implements Serializable {
             maybeParse();
             script = new Script(scriptBytes);
             scriptSig = new WeakReference<Script>(script);
-            return script;
         }
         return script;
     }
@@ -280,10 +278,8 @@ public class TransactionInput extends ChildMessage implements Serializable {
      */
     @Override
     public String toString() {
-        if (isCoinBase())
-            return "TxIn: COINBASE";
         try {
-            return "TxIn for [" + outpoint + "]: " + getScriptSig();
+            return isCoinBase() ? "TxIn: COINBASE" : "TxIn for [" + outpoint + "]: " + getScriptSig();
         } catch (ScriptException e) {
             throw new RuntimeException(e);
         }
@@ -397,16 +393,6 @@ public class TransactionInput extends ChildMessage implements Serializable {
     }
 
     /**
-     * Ensure object is fully parsed before invoking java serialization.  The backing byte array
-     * is transient so if the object has parseLazy = true and hasn't invoked checkParse yet
-     * then data will be lost during serialization.
-     */
-    private void writeObject(ObjectOutputStream out) throws IOException {
-        maybeParse();
-        out.defaultWriteObject();
-    }
-
-    /**
      * @return true if this transaction's sequence number is set (ie it may be a part of a time-locked transaction)
      */
     public boolean hasSequence() {
@@ -476,24 +462,13 @@ public class TransactionInput extends ChildMessage implements Serializable {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-
-        TransactionInput input = (TransactionInput) o;
-
-        if (sequence != input.sequence) return false;
-        if (!outpoint.equals(input.outpoint)) return false;
-        if (!Arrays.equals(scriptBytes, input.scriptBytes)) return false;
-        if (scriptSig != null ? !scriptSig.equals(input.scriptSig) : input.scriptSig != null) return false;
-        if (parent != input.parent) return false;
-
-        return true;
+        TransactionInput other = (TransactionInput) o;
+        return sequence == other.sequence && parent == other.parent
+            && outpoint.equals(other.outpoint) && Arrays.equals(scriptBytes, other.scriptBytes);
     }
 
     @Override
     public int hashCode() {
-        int result = (int) (sequence ^ (sequence >>> 32));
-        result = 31 * result + outpoint.hashCode();
-        result = 31 * result + (scriptBytes != null ? Arrays.hashCode(scriptBytes) : 0);
-        result = 31 * result + (scriptSig != null ? scriptSig.hashCode() : 0);
-        return result;
+        return Objects.hashCode(sequence, outpoint, Arrays.hashCode(scriptBytes));
     }
 }

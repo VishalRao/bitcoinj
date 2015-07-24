@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.bitcoinj.core.Utils.*;
+import com.google.common.base.Objects;
 
 /**
  * <p>A data structure that contains proofs of block inclusion for one or more transactions, in an efficient manner.</p>
@@ -101,7 +102,7 @@ public class PartialMerkleTree extends Message {
 
         stream.write(new VarInt(hashes.size()).encode());
         for (Sha256Hash hash : hashes)
-            stream.write(reverseBytes(hash.getBytes()));
+            stream.write(hash.getReversedBytes());
 
         stream.write(new VarInt(matchedChildBits.length).encode());
         stream.write(matchedChildBits);
@@ -214,9 +215,9 @@ public class PartialMerkleTree extends Message {
     }
 
     private static Sha256Hash combineLeftRight(byte[] left, byte[] right) {
-        return new Sha256Hash(reverseBytes(doubleDigestTwoBuffers(
-                reverseBytes(left), 0, 32,
-                reverseBytes(right), 0, 32)));
+        return Sha256Hash.wrapReversed(Sha256Hash.hashTwice(
+            reverseBytes(left), 0, 32,
+            reverseBytes(right), 0, 32));
     }
 
     /**
@@ -269,22 +270,14 @@ public class PartialMerkleTree extends Message {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-
-        PartialMerkleTree tree = (PartialMerkleTree) o;
-
-        if (transactionCount != tree.transactionCount) return false;
-        if (!hashes.equals(tree.hashes)) return false;
-        if (!Arrays.equals(matchedChildBits, tree.matchedChildBits)) return false;
-
-        return true;
+        PartialMerkleTree other = (PartialMerkleTree) o;
+        return transactionCount == other.transactionCount && hashes.equals(other.hashes)
+            && Arrays.equals(matchedChildBits, other.matchedChildBits);
     }
 
     @Override
     public int hashCode() {
-        int result = transactionCount;
-        result = 31 * result + Arrays.hashCode(matchedChildBits);
-        result = 31 * result + hashes.hashCode();
-        return result;
+        return Objects.hashCode(transactionCount, hashes, Arrays.hashCode(matchedChildBits));
     }
 
     @Override

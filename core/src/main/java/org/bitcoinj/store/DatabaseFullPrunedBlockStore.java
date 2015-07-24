@@ -19,6 +19,7 @@ package org.bitcoinj.store;
 
 import com.google.common.collect.Lists;
 import org.bitcoinj.core.*;
+import org.bitcoinj.script.Script;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -586,7 +587,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         if (!rs.next()) {
             throw new BlockStoreException("corrupt database block store - no chain head pointer");
         }
-        Sha256Hash hash = new Sha256Hash(rs.getBytes(1));
+        Sha256Hash hash = Sha256Hash.wrap(rs.getBytes(1));
         rs.close();
         this.chainHeadBlock = get(hash);
         this.chainHeadHash = hash;
@@ -598,7 +599,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         if (!rs.next()) {
             throw new BlockStoreException("corrupt database block store - no verified chain head pointer");
         }
-        hash = new Sha256Hash(rs.getBytes(1));
+        hash = Sha256Hash.wrap(rs.getBytes(1));
         rs.close();
         ps.close();
         this.verifiedChainHeadBlock = get(hash);
@@ -618,7 +619,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             s.setBytes(1, hashBytes);
             s.setBytes(2, storedBlock.getChainWork().toByteArray());
             s.setInt(3, storedBlock.getHeight());
-            s.setBytes(4, storedBlock.getHeader().unsafeBitcoinSerialize());
+            s.setBytes(4, storedBlock.getHeader().cloneAsHeader().unsafeBitcoinSerialize());
             s.setBoolean(5, wasUndoable);
             s.executeUpdate();
             s.close();
@@ -666,10 +667,10 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
                 txOutChanges = bos.toByteArray();
             } else {
                 int numTxn = undoableBlock.getTransactions().size();
-                bos.write((int) (0xFF & (numTxn >> 0)));
-                bos.write((int) (0xFF & (numTxn >> 8)));
-                bos.write((int) (0xFF & (numTxn >> 16)));
-                bos.write((int) (0xFF & (numTxn >> 24)));
+                bos.write(0xFF & numTxn);
+                bos.write(0xFF & (numTxn >> 8));
+                bos.write(0xFF & (numTxn >> 16));
+                bos.write(0xFF & (numTxn >> 24));
                 for (Transaction tx : undoableBlock.getTransactions())
                     tx.bitcoinSerialize(bos);
                 transactions = bos.toByteArray();
@@ -804,7 +805,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             StoredUndoableBlock block;
             if (txOutChanges == null) {
                 int offset = 0;
-                int numTxn = ((transactions[offset++] & 0xFF) << 0) |
+                int numTxn = ((transactions[offset++] & 0xFF)) |
                         ((transactions[offset++] & 0xFF) << 8) |
                         ((transactions[offset++] & 0xFF) << 16) |
                         ((transactions[offset++] & 0xFF) << 24);
@@ -929,15 +930,13 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             byte[] scriptBytes = results.getBytes(3);
             boolean coinbase = results.getBoolean(4);
             String address = results.getString(5);
-            int addressType = results.getInt(6);
             UTXO txout = new UTXO(hash,
                     index,
                     value,
                     height,
                     coinbase,
-                    scriptBytes,
-                    address,
-                    addressType);
+                    new Script(scriptBytes),
+                    address);
             return txout;
         } catch (SQLException ex) {
             throw new BlockStoreException(ex);
@@ -963,9 +962,9 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             s.setInt(2, (int) out.getIndex());
             s.setInt(3, out.getHeight());
             s.setLong(4, out.getValue().value);
-            s.setBytes(5, out.getScriptBytes());
+            s.setBytes(5, out.getScript().getProgram());
             s.setString(6, out.getAddress());
-            s.setInt(7, out.getAddressType());
+            s.setInt(7, out.getScript().getScriptType().ordinal());
             s.setBoolean(8, out.isCoinbase());
             s.executeUpdate();
             s.close();
@@ -1130,7 +1129,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
      *         address, the return value is 0.
      * @throws BlockStoreException If there is an error getting the balance.
      */
-    protected BigInteger calculateBalanceForAddress(Address address) throws BlockStoreException {
+    public BigInteger calculateBalanceForAddress(Address address) throws BlockStoreException {
         maybeConnect();
         PreparedStatement s = null;
         try {
@@ -1138,7 +1137,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             s.setString(1, address.toString());
             ResultSet rs = s.executeQuery();
             BigInteger balance = BigInteger.ZERO;
-            while (rs.next()) {
+            if (rs.next()) {
                 return BigInteger.valueOf(rs.getLong(1));
             }
             return balance;
@@ -1166,22 +1165,20 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
                 s.setString(1, address.toString());
                 ResultSet rs = s.executeQuery();
                 while (rs.next()) {
-                    Sha256Hash hash = new Sha256Hash(rs.getBytes(1));
+                    Sha256Hash hash = Sha256Hash.wrap(rs.getBytes(1));
                     Coin amount = Coin.valueOf(rs.getLong(2));
                     byte[] scriptBytes = rs.getBytes(3);
                     int height = rs.getInt(4);
                     int index = rs.getInt(5);
                     boolean coinbase = rs.getBoolean(6);
                     String toAddress = rs.getString(7);
-                    int addressType = rs.getInt(8);
                     UTXO output = new UTXO(hash,
                             index,
                             amount,
                             height,
                             coinbase,
-                            scriptBytes,
-                            toAddress,
-                            addressType);
+                            new Script(scriptBytes),
+                            toAddress);
                     outputs.add(output);
                 }
             }

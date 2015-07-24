@@ -16,22 +16,18 @@
 
 package org.bitcoinj.net;
 
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
-import org.slf4j.LoggerFactory;
+import com.google.common.util.concurrent.*;
+import org.bitcoinj.core.*;
+import org.slf4j.*;
 
-import javax.annotation.Nullable;
-import javax.net.SocketFactory;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.nio.ByteBuffer;
-import java.util.Set;
+import javax.annotation.*;
+import javax.net.*;
+import java.io.*;
+import java.net.*;
+import java.nio.*;
+import java.util.*;
 
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.*;
 
 /**
  * <p>Creates a simple connection to a server using a {@link StreamParser} to process data.</p>
@@ -46,7 +42,6 @@ public class BlockingClient implements MessageWriteTarget {
     private static final int BUFFER_SIZE_LOWER_BOUND = 4096;
     private static final int BUFFER_SIZE_UPPER_BOUND = 65536;
 
-    private final ByteBuffer dbuf;
     private Socket socket;
     private volatile boolean vCloseRequested = false;
     private SettableFuture<SocketAddress> connectFuture;
@@ -64,16 +59,18 @@ public class BlockingClient implements MessageWriteTarget {
      * @param clientSet A set which this object will add itself to after initialization, and then remove itself from
      */
     public BlockingClient(final SocketAddress serverAddress, final StreamParser parser,
-                          final int connectTimeoutMillis, final SocketFactory socketFactory, @Nullable final Set<BlockingClient> clientSet) throws IOException {
+                          final int connectTimeoutMillis, final SocketFactory socketFactory,
+                          @Nullable final Set<BlockingClient> clientSet) throws IOException {
         connectFuture = SettableFuture.create();
         // Try to fit at least one message in the network buffer, but place an upper and lower limit on its size to make
         // sure it doesnt get too large or have to call read too often.
-        dbuf = ByteBuffer.allocateDirect(Math.min(Math.max(parser.getMaxMessageSize(), BUFFER_SIZE_LOWER_BOUND), BUFFER_SIZE_UPPER_BOUND));
         parser.setWriteTarget(this);
         socket = socketFactory.createSocket();
+        final Context context = Context.get();
         Thread t = new Thread() {
             @Override
             public void run() {
+                Context.propagate(context);
                 if (clientSet != null)
                     clientSet.add(BlockingClient.this);
                 try {
@@ -81,28 +78,10 @@ public class BlockingClient implements MessageWriteTarget {
                     parser.connectionOpened();
                     connectFuture.set(serverAddress);
                     InputStream stream = socket.getInputStream();
-                    byte[] readBuff = new byte[dbuf.capacity()];
-
-                    while (true) {
-                        // TODO Kill the message duplication here
-                        checkState(dbuf.remaining() > 0 && dbuf.remaining() <= readBuff.length);
-                        int read = stream.read(readBuff, 0, Math.max(1, Math.min(dbuf.remaining(), stream.available())));
-                        if (read == -1)
-                            return;
-                        dbuf.put(readBuff, 0, read);
-                        // "flip" the buffer - setting the limit to the current position and setting position to 0
-                        dbuf.flip();
-                        // Use parser.receiveBytes's return value as a double-check that it stopped reading at the right
-                        // location
-                        int bytesConsumed = parser.receiveBytes(dbuf);
-                        checkState(dbuf.position() == bytesConsumed);
-                        // Now drop the bytes which were read by compacting dbuf (resetting limit and keeping relative
-                        // position)
-                        dbuf.compact();
-                    }
+                    runReadLoop(stream, parser);
                 } catch (Exception e) {
                     if (!vCloseRequested) {
-                        log.error("Error trying to open/read from connection: " + serverAddress, e);
+                        log.error("Error trying to open/read from connection: {}: {}", serverAddress, e.getMessage());
                         connectFuture.setException(e);
                     }
                 } finally {
@@ -120,6 +99,32 @@ public class BlockingClient implements MessageWriteTarget {
         t.setName("BlockingClient network thread for " + serverAddress);
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * A blocking call that never returns, except by throwing an exception. It reads bytes from the input stream
+     * and feeds them to the provided {@link StreamParser}, for example, a {@link Peer}.
+     */
+    public static void runReadLoop(InputStream stream, StreamParser parser) throws Exception {
+        ByteBuffer dbuf = ByteBuffer.allocateDirect(Math.min(Math.max(parser.getMaxMessageSize(), BUFFER_SIZE_LOWER_BOUND), BUFFER_SIZE_UPPER_BOUND));
+        byte[] readBuff = new byte[dbuf.capacity()];
+        while (true) {
+            // TODO Kill the message duplication here
+            checkState(dbuf.remaining() > 0 && dbuf.remaining() <= readBuff.length);
+            int read = stream.read(readBuff, 0, Math.max(1, Math.min(dbuf.remaining(), stream.available())));
+            if (read == -1)
+                return;
+            dbuf.put(readBuff, 0, read);
+            // "flip" the buffer - setting the limit to the current position and setting position to 0
+            dbuf.flip();
+            // Use parser.receiveBytes's return value as a double-check that it stopped reading at the right
+            // location
+            int bytesConsumed = parser.receiveBytes(dbuf);
+            checkState(dbuf.position() == bytesConsumed);
+            // Now drop the bytes which were read by compacting dbuf (resetting limit and keeping relative
+            // position)
+            dbuf.compact();
+        }
     }
 
     /**

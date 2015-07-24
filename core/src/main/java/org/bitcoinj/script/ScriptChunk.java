@@ -18,13 +18,13 @@
 package org.bitcoinj.script;
 
 import org.bitcoinj.core.Utils;
+import com.google.common.base.Objects;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Arrays;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static org.bitcoinj.script.ScriptOpCodes.*;
 
@@ -140,10 +140,7 @@ public class ScriptChunk {
             buf.append(getOpCodeName(opcode));
         } else if (data != null) {
             // Data chunk
-            buf.append(getPushDataName(opcode));
-            buf.append("[");
-            buf.append(Utils.HEX.encode(data));
-            buf.append("]");
+            buf.append(getPushDataName(opcode)).append("[").append(Utils.HEX.encode(data)).append("]");
         } else {
             // Small num
             buf.append(Script.decodeFromOpN(opcode));
@@ -155,21 +152,13 @@ public class ScriptChunk {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-
         ScriptChunk other = (ScriptChunk) o;
-
-        if (opcode != other.opcode) return false;
-        if (startLocationInProgram != other.startLocationInProgram) return false;
-        if (!Arrays.equals(data, other.data)) return false;
-
-        return true;
+        return opcode == other.opcode && startLocationInProgram == other.startLocationInProgram
+            && Arrays.equals(data, other.data);
     }
 
     @Override
     public int hashCode() {
-        int result = opcode;
-        result = 31 * result + (data != null ? Arrays.hashCode(data) : 0);
-        result = 31 * result + startLocationInProgram;
-        return result;
+        return Objects.hashCode(opcode, startLocationInProgram, Arrays.hashCode(data));
     }
 }

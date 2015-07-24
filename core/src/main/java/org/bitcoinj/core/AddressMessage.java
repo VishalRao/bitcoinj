@@ -12,10 +12,9 @@ import java.util.List;
  * using addr messages is not presently implemented.
  */
 public class AddressMessage extends Message {
-    private static final long serialVersionUID = 8058283864924679460L;
+
     private static final long MAX_ADDRESSES = 1024;
     private List<PeerAddress> addresses;
-    private transient long numAddresses = -1;
 
     /**
      * Contruct a new 'addr' message.
@@ -62,7 +61,7 @@ public class AddressMessage extends Message {
 
     @Override
     void parse() throws ProtocolException {
-        numAddresses = readVarInt();
+        long numAddresses = readVarInt();
         // Guard against ultra large messages that will crash us.
         if (numAddresses > MAX_ADDRESSES)
             throw new ProtocolException("Address message too large.");
@@ -101,17 +100,6 @@ public class AddressMessage extends Message {
     }
 
     /**
-     * AddressMessage cannot cache checksum in non-retain mode due to dynamic time being used.
-     */
-    @Override
-    void setChecksum(byte[] checksum) {
-        if (parseRetain)
-            super.setChecksum(checksum);
-        else
-            this.checksum = null;
-    }
-
-    /**
      * @return An unmodifiableList view of the backing List of addresses.  Addresses contained within the list may be safely modified.
      */
     public List<PeerAddress> getAddresses() {
@@ -142,13 +130,7 @@ public class AddressMessage extends Message {
 
     @Override
     public String toString() {
-        StringBuilder builder = new StringBuilder();
-        builder.append("addr: ");
-        for (PeerAddress a : addresses) {
-            builder.append(a.toString());
-            builder.append(" ");
-        }
-        return builder.toString();
+        return "addr: " + Utils.join(addresses);
     }
 
 }

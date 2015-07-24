@@ -26,6 +26,8 @@ import org.bitcoinj.signers.LocalTransactionSigner;
 import org.bitcoinj.signers.TransactionSigner;
 import org.bitcoinj.utils.ExchangeRate;
 import org.bitcoinj.utils.Fiat;
+import org.bitcoinj.wallet.DefaultKeyChainFactory;
+import org.bitcoinj.wallet.KeyChainFactory;
 import org.bitcoinj.wallet.KeyChainGroup;
 import org.bitcoinj.wallet.WalletTransaction;
 import com.google.common.collect.Lists;
@@ -74,6 +76,8 @@ public class WalletProtobufSerializer {
     private static final Logger log = LoggerFactory.getLogger(WalletProtobufSerializer.class);
     /** Current version used for serializing wallets. A version higher than this is considered from the future. */
     public static final int CURRENT_WALLET_VERSION = Protos.Wallet.getDefaultInstance().getVersion();
+    // 512 MB
+    private static final int WALLET_SIZE_LIMIT = 512 * 1024 * 1024;
     // Used for de-serialization
     protected Map<ByteString, Transaction> txMap;
 
@@ -84,6 +88,7 @@ public class WalletProtobufSerializer {
     }
 
     private final WalletFactory factory;
+    private KeyChainFactory keyChainFactory;
 
     public WalletProtobufSerializer() {
         this(new WalletFactory() {
@@ -97,6 +102,11 @@ public class WalletProtobufSerializer {
     public WalletProtobufSerializer(WalletFactory factory) {
         txMap = new HashMap<ByteString, Transaction>();
         this.factory = factory;
+        this.keyChainFactory = new DefaultKeyChainFactory();
+    }
+
+    public void setKeyChainFactory(KeyChainFactory keyChainFactory) {
+        this.keyChainFactory = keyChainFactory;
     }
 
     /**
@@ -289,6 +299,7 @@ public class WalletProtobufSerializer {
             case ASSURANCE_CONTRACT_CLAIM: purpose = Protos.Transaction.Purpose.ASSURANCE_CONTRACT_CLAIM; break;
             case ASSURANCE_CONTRACT_PLEDGE: purpose = Protos.Transaction.Purpose.ASSURANCE_CONTRACT_PLEDGE; break;
             case ASSURANCE_CONTRACT_STUB: purpose = Protos.Transaction.Purpose.ASSURANCE_CONTRACT_STUB; break;
+            case RAISE_FEE: purpose = Protos.Transaction.Purpose.RAISE_FEE; break;
             default:
                 throw new RuntimeException("New tx purpose serialization not implemented.");
         }
@@ -363,7 +374,7 @@ public class WalletProtobufSerializer {
     }
 
     public static Sha256Hash byteStringToHash(ByteString bs) {
-        return new Sha256Hash(bs.toByteArray());
+        return Sha256Hash.wrap(bs.toByteArray());
     }
 
     /**
@@ -415,9 +426,9 @@ public class WalletProtobufSerializer {
         if (walletProto.hasEncryptionParameters()) {
             Protos.ScryptParameters encryptionParameters = walletProto.getEncryptionParameters();
             final KeyCrypterScrypt keyCrypter = new KeyCrypterScrypt(encryptionParameters);
-            chain = KeyChainGroup.fromProtobufEncrypted(params, walletProto.getKeyList(), keyCrypter);
+            chain = KeyChainGroup.fromProtobufEncrypted(params, walletProto.getKeyList(), keyCrypter, keyChainFactory);
         } else {
-            chain = KeyChainGroup.fromProtobufUnencrypted(params, walletProto.getKeyList());
+            chain = KeyChainGroup.fromProtobufUnencrypted(params, walletProto.getKeyList(), keyChainFactory);
         }
         Wallet wallet = factory.create(params, chain);
 
@@ -519,10 +530,8 @@ public class WalletProtobufSerializer {
                     wallet.deserializeExtension(extension, extProto.getData().toByteArray());
                 } catch (Exception e) {
                     if (extProto.getMandatory() && requireMandatoryExtensions) {
-                        log.error("Error whilst reading extension {}, failing to read wallet", id, e);
+                        log.error("Error whilst reading mandatory extension {}, failing to read wallet", id);
                         throw new UnreadableWalletException("Could not parse mandatory extension in wallet: " + id);
-                    } else {
-                        log.error("Error whilst reading extension {}, ignoring", id, e);
                     }
                 }
             }
@@ -531,11 +540,13 @@ public class WalletProtobufSerializer {
 
     /**
      * Returns the loaded protocol buffer from the given byte stream. You normally want
-     * {@link Wallet#loadFromFile(java.io.File)} instead - this method is designed for low level work involving the
-     * wallet file format itself.
+     * {@link Wallet#loadFromFile(java.io.File, WalletExtension...)} instead - this method is designed for low level
+     * work involving the wallet file format itself.
      */
     public static Protos.Wallet parseToProto(InputStream input) throws IOException {
-        return Protos.Wallet.parseFrom(input);
+        CodedInputStream codedInput = CodedInputStream.newInstance(input);
+        codedInput.setSizeLimit(WALLET_SIZE_LIMIT);
+        return Protos.Wallet.parseFrom(codedInput);
     }
 
     private void readTransaction(Protos.Transaction txProto, NetworkParameters params) throws UnreadableWalletException {
@@ -585,6 +596,7 @@ public class WalletProtobufSerializer {
                 case ASSURANCE_CONTRACT_CLAIM: tx.setPurpose(Transaction.Purpose.ASSURANCE_CONTRACT_CLAIM); break;
                 case ASSURANCE_CONTRACT_PLEDGE: tx.setPurpose(Transaction.Purpose.ASSURANCE_CONTRACT_PLEDGE); break;
                 case ASSURANCE_CONTRACT_STUB: tx.setPurpose(Transaction.Purpose.ASSURANCE_CONTRACT_STUB); break;
+                case RAISE_FEE: tx.setPurpose(Transaction.Purpose.RAISE_FEE); break;
                 default: throw new RuntimeException("New purpose serialization not implemented");
             }
         } else {

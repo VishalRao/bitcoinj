@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2011 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ import java.util.List;
  * missing. Those blocks can then be downloaded with a {@link GetDataMessage}.
  */
 public class GetBlocksMessage extends Message {
-    private static final long serialVersionUID = 3479412877853645644L;
+
     protected long version;
     protected List<Sha256Hash> locator;
     protected Sha256Hash stopHash;
@@ -49,7 +49,7 @@ public class GetBlocksMessage extends Message {
         int startCount = (int) readVarInt();
         if (startCount > 500)
             throw new ProtocolException("Number of locators cannot be > 500, received: " + startCount);
-        length = (int) (cursor - offset + ((startCount + 1) * 32));
+        length = cursor - offset + ((startCount + 1) * 32);
     }
 
     @Override
@@ -76,13 +76,7 @@ public class GetBlocksMessage extends Message {
 
     @Override
     public String toString() {
-        StringBuffer b = new StringBuffer();
-        b.append("getblocks: ");
-        for (Sha256Hash hash : locator) {
-            b.append(hash.toString());
-            b.append(" ");
-        }
-        return b.toString();
+        return "getblocks: " + Utils.join(locator);
     }
 
     @Override
@@ -95,10 +89,10 @@ public class GetBlocksMessage extends Message {
         stream.write(new VarInt(locator.size()).encode());
         for (Sha256Hash hash : locator) {
             // Have to reverse as wire format is little endian.
-            stream.write(Utils.reverseBytes(hash.getBytes()));
+            stream.write(hash.getReversedBytes());
         }
         // Next, a block ID to stop at.
-        stream.write(Utils.reverseBytes(stopHash.getBytes()));
+        stream.write(stopHash.getReversedBytes());
     }
 
     @Override
@@ -106,17 +100,14 @@ public class GetBlocksMessage extends Message {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         GetBlocksMessage other = (GetBlocksMessage) o;
-        return version == other.version &&
-               locator.size() == other.locator.size() &&
-               locator.containsAll(other.locator) &&
-               stopHash.equals(other.stopHash);
+        return version == other.version && stopHash.equals(other.stopHash) &&
+            locator.size() == other.locator.size() && locator.containsAll(other.locator); // ignores locator ordering
     }
 
     @Override
     public int hashCode() {
-        int hashCode = (int) version ^ "getblocks".hashCode();
-        for (Sha256Hash aLocator : locator) hashCode ^= aLocator.hashCode();
-        hashCode ^= stopHash.hashCode();
+        int hashCode = (int)version ^ "getblocks".hashCode() ^ stopHash.hashCode();
+        for (Sha256Hash aLocator : locator) hashCode ^= aLocator.hashCode(); // ignores locator ordering
         return hashCode;
     }
 }

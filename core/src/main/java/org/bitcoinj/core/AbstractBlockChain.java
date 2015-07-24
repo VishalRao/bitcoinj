@@ -29,7 +29,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
-import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -86,7 +85,6 @@ public abstract class AbstractBlockChain {
 
     /** Keeps a map of block hashes to StoredBlocks. */
     private final BlockStore blockStore;
-    private final Context context;
 
     /**
      * Tracks the top of the best known chain.<p>
@@ -138,23 +136,23 @@ public abstract class AbstractBlockChain {
     private double falsePositiveTrend;
     private double previousFalsePositiveRate;
 
+    /** See {@link #AbstractBlockChain(Context, List, BlockStore)} */
+    public AbstractBlockChain(NetworkParameters params, List<BlockChainListener> listeners,
+                              BlockStore blockStore) throws BlockStoreException {
+        this(Context.getOrCreate(params), listeners, blockStore);
+    }
 
     /**
      * Constructs a BlockChain connected to the given list of listeners (eg, wallets) and a store.
      */
-    public AbstractBlockChain(NetworkParameters params, List<BlockChainListener> listeners,
+    public AbstractBlockChain(Context context, List<BlockChainListener> listeners,
                               BlockStore blockStore) throws BlockStoreException {
         this.blockStore = blockStore;
         chainHead = blockStore.getChainHead();
         log.info("chain head is at height {}:\n{}", chainHead.getHeight(), chainHead.getHeader());
-        this.params = params;
+        this.params = context.getParams();
         this.listeners = new CopyOnWriteArrayList<ListenerRegistration<BlockChainListener>>();
         for (BlockChainListener l : listeners) addListener(l, Threading.SAME_THREAD);
-        context = new Context();
-    }
-
-    public Context getContext() {
-        return context;
     }
 
     /**
@@ -350,24 +348,13 @@ public abstract class AbstractBlockChain {
      */
     protected abstract TransactionOutputChanges connectTransactions(StoredBlock newBlock) throws VerificationException, BlockStoreException, PrunedException;    
     
-    // Stat counters.
-    private long statsLastTime = System.currentTimeMillis();
-    private long statsBlocksAdded;
-
     // filteredTxHashList contains all transactions, filteredTxn just a subset
     private boolean add(Block block, boolean tryConnecting,
                         @Nullable List<Sha256Hash> filteredTxHashList, @Nullable Map<Sha256Hash, Transaction> filteredTxn)
             throws BlockStoreException, VerificationException, PrunedException {
+        // TODO: Use read/write locks to ensure that during chain download properties are still low latency.
         lock.lock();
         try {
-            // TODO: Use read/write locks to ensure that during chain download properties are still low latency.
-            if (System.currentTimeMillis() - statsLastTime > 1000) {
-                // More than a second passed since last stats logging.
-                if (statsBlocksAdded > 1)
-                    log.info("{} blocks per second", statsBlocksAdded);
-                statsLastTime = System.currentTimeMillis();
-                statsBlocksAdded = 0;
-            }
             // Quick check for duplicates to avoid an expensive check further down (in findSplit). This can happen a lot
             // when connecting orphan transactions due to the dumb brute force algorithm we use.
             if (block.equals(getChainHead().getHeader())) {
@@ -387,21 +374,13 @@ public abstract class AbstractBlockChain {
                 return true;
             }
 
-            // Does this block contain any transactions we might care about? Check this up front before verifying the
-            // blocks validity so we can skip the merkle root verification if the contents aren't interesting. This saves
-            // a lot of time for big blocks.
-            boolean contentsImportant = shouldVerifyTransactions();
-            if (block.transactions != null) {
-                contentsImportant = contentsImportant || containsRelevantTransactions(block);
-            }
-
             // Prove the block is internally valid: hash is lower than target, etc. This only checks the block contents
             // if there is a tx sending or receiving coins using an address in one of our wallets. And those transactions
             // are only lightly verified: presence in a valid connecting block is taken as proof of validity. See the
             // article here for more details: http://code.google.com/p/bitcoinj/wiki/SecurityModel
             try {
                 block.verifyHeader();
-                if (contentsImportant)
+                if (shouldVerifyTransactions())
                     block.verifyTransactions();
             } catch (VerificationException e) {
                 log.error("Failed to verify block: ", e);
@@ -421,15 +400,15 @@ public abstract class AbstractBlockChain {
                 orphanBlocks.put(block.getHash(), new OrphanBlock(block, filteredTxHashList, filteredTxn));
                 return false;
             } else {
+                checkState(lock.isHeldByCurrentThread());
                 // It connects to somewhere on the chain. Not necessarily the top of the best known chain.
-                checkDifficultyTransitions(storedPrev, block);
+                params.checkDifficultyTransitions(storedPrev, block, blockStore);
                 connectBlock(block, storedPrev, shouldVerifyTransactions(), filteredTxHashList, filteredTxn);
             }
 
             if (tryConnecting)
                 tryConnectingOrphans();
 
-            statsBlocksAdded++;
             return true;
         } finally {
             lock.unlock();
@@ -603,7 +582,7 @@ public abstract class AbstractBlockChain {
                 Transaction tx = filteredTxn.get(hash);
                 if (tx != null) {
                     sendTransactionsToListener(newStoredBlock, newBlockType, listener, relativityOffset,
-                            Arrays.asList(tx), !first, falsePositives);
+                            Collections.singletonList(tx), !first, falsePositives);
                 } else {
                     if (listener.notifyTransactionIsInBlock(hash, newStoredBlock, newBlockType, relativityOffset)) {
                         falsePositives.remove(hash);
@@ -677,14 +656,15 @@ public abstract class AbstractBlockChain {
             // Walk in ascending chronological order.
             for (Iterator<StoredBlock> it = newBlocks.descendingIterator(); it.hasNext();) {
                 cursor = it.next();
-                if (expensiveChecks && cursor.getHeader().getTimeSeconds() <= getMedianTimestampOfRecentBlocks(cursor.getPrev(blockStore), blockStore))
+                Block cursorBlock = cursor.getHeader();
+                if (expensiveChecks && cursorBlock.getTimeSeconds() <= getMedianTimestampOfRecentBlocks(cursor.getPrev(blockStore), blockStore))
                     throw new VerificationException("Block's timestamp is too early during reorg");
                 TransactionOutputChanges txOutChanges;
                 if (cursor != newChainHead || block == null)
                     txOutChanges = connectTransactions(cursor);
                 else
                     txOutChanges = connectTransactions(newChainHead.getHeight(), block);
-                storedNewHead = addToBlockStore(storedNewHead, cursor.getHeader(), txOutChanges);
+                storedNewHead = addToBlockStore(storedNewHead, cursorBlock.cloneAsHeader(), txOutChanges);
             }
         } else {
             // (Finally) write block to block store
@@ -777,12 +757,10 @@ public abstract class AbstractBlockChain {
                                                    Set<Sha256Hash> falsePositives) throws VerificationException {
         for (Transaction tx : transactions) {
             try {
-                if (listener.isTransactionRelevant(tx)) {
-                    falsePositives.remove(tx.getHash());
-                    if (clone)
-                        tx = new Transaction(tx.params, tx.bitcoinSerialize());
-                    listener.receiveFromBlock(tx, block, blockType, relativityOffset++);
-                }
+                falsePositives.remove(tx.getHash());
+                if (clone)
+                    tx = new Transaction(tx.params, tx.bitcoinSerialize());
+                listener.receiveFromBlock(tx, block, blockType, relativityOffset++);
             } catch (ScriptException e) {
                 // We don't want scripts we don't understand to break the block chain so just note that this tx was
                 // not scanned here and continue.
@@ -836,127 +814,6 @@ public abstract class AbstractBlockChain {
                 log.info("Connected {} orphan blocks.", blocksConnectedThisRound);
             }
         } while (blocksConnectedThisRound > 0);
-    }
-
-    // February 16th 2012
-    private static final Date testnetDiffDate = new Date(1329264000000L);
-
-    /**
-     * Throws an exception if the blocks difficulty is not correct.
-     */
-    private void checkDifficultyTransitions(StoredBlock storedPrev, Block nextBlock) throws BlockStoreException, VerificationException {
-        checkState(lock.isHeldByCurrentThread());
-        Block prev = storedPrev.getHeader();
-        
-        // Is this supposed to be a difficulty transition point?
-        if ((storedPrev.getHeight() + 1) % params.getInterval() != 0) {
-
-            // TODO: Refactor this hack after 0.5 is released and we stop supporting deserialization compatibility.
-            // This should be a method of the NetworkParameters, which should in turn be using singletons and a subclass
-            // for each network type. Then each network can define its own difficulty transition rules.
-            if (params.getId().equals(NetworkParameters.ID_TESTNET) && nextBlock.getTime().after(testnetDiffDate)) {
-                checkTestnetDifficulty(storedPrev, prev, nextBlock);
-                return;
-            }
-
-            // No ... so check the difficulty didn't actually change.
-            if (nextBlock.getDifficultyTarget() != prev.getDifficultyTarget())
-                throw new VerificationException("Unexpected change in difficulty at height " + storedPrev.getHeight() +
-                        ": " + Long.toHexString(nextBlock.getDifficultyTarget()) + " vs " +
-                        Long.toHexString(prev.getDifficultyTarget()));
-            return;
-        }
-
-        // We need to find a block far back in the chain. It's OK that this is expensive because it only occurs every
-        // two weeks after the initial block chain download.
-        long now = System.currentTimeMillis();
-        StoredBlock cursor = blockStore.get(prev.getHash());
-        for (int i = 0; i < params.getInterval() - 1; i++) {
-            if (cursor == null) {
-                // This should never happen. If it does, it means we are following an incorrect or busted chain.
-                throw new VerificationException(
-                        "Difficulty transition point but we did not find a way back to the genesis block.");
-            }
-            cursor = blockStore.get(cursor.getHeader().getPrevBlockHash());
-        }
-        long elapsed = System.currentTimeMillis() - now;
-        if (elapsed > 50)
-            log.info("Difficulty transition traversal took {}msec", elapsed);
-
-        Block blockIntervalAgo = cursor.getHeader();
-        int timespan = (int) (prev.getTimeSeconds() - blockIntervalAgo.getTimeSeconds());
-        // Limit the adjustment step.
-        final int targetTimespan = params.getTargetTimespan();
-        if (timespan < targetTimespan / 4)
-            timespan = targetTimespan / 4;
-        if (timespan > targetTimespan * 4)
-            timespan = targetTimespan * 4;
-
-        BigInteger newTarget = Utils.decodeCompactBits(prev.getDifficultyTarget());
-        newTarget = newTarget.multiply(BigInteger.valueOf(timespan));
-        newTarget = newTarget.divide(BigInteger.valueOf(targetTimespan));
-
-        if (newTarget.compareTo(params.getMaxTarget()) > 0) {
-            log.info("Difficulty hit proof of work limit: {}", newTarget.toString(16));
-            newTarget = params.getMaxTarget();
-        }
-
-        int accuracyBytes = (int) (nextBlock.getDifficultyTarget() >>> 24) - 3;
-        long receivedTargetCompact = nextBlock.getDifficultyTarget();
-
-        // The calculated difficulty is to a higher precision than received, so reduce here.
-        BigInteger mask = BigInteger.valueOf(0xFFFFFFL).shiftLeft(accuracyBytes * 8);
-        newTarget = newTarget.and(mask);
-        long newTargetCompact = Utils.encodeCompactBits(newTarget);
-
-        if (newTargetCompact != receivedTargetCompact)
-            throw new VerificationException("Network provided difficulty bits do not match what was calculated: " +
-                    newTargetCompact + " vs " + receivedTargetCompact);
-    }
-
-    private void checkTestnetDifficulty(StoredBlock storedPrev, Block prev, Block next) throws VerificationException, BlockStoreException {
-        checkState(lock.isHeldByCurrentThread());
-        // After 15th February 2012 the rules on the testnet change to avoid people running up the difficulty
-        // and then leaving, making it too hard to mine a block. On non-difficulty transition points, easy
-        // blocks are allowed if there has been a span of 20 minutes without one.
-        final long timeDelta = next.getTimeSeconds() - prev.getTimeSeconds();
-        // There is an integer underflow bug in bitcoin-qt that means mindiff blocks are accepted when time
-        // goes backwards.
-        if (timeDelta >= 0 && timeDelta <= NetworkParameters.TARGET_SPACING * 2) {
-            // Walk backwards until we find a block that doesn't have the easiest proof of work, then check
-            // that difficulty is equal to that one.
-            StoredBlock cursor = storedPrev;
-            while (!cursor.getHeader().equals(params.getGenesisBlock()) &&
-                   cursor.getHeight() % params.getInterval() != 0 &&
-                   cursor.getHeader().getDifficultyTargetAsInteger().equals(params.getMaxTarget()))
-                cursor = cursor.getPrev(blockStore);
-            BigInteger cursorTarget = cursor.getHeader().getDifficultyTargetAsInteger();
-            BigInteger newTarget = next.getDifficultyTargetAsInteger();
-            if (!cursorTarget.equals(newTarget))
-                throw new VerificationException("Testnet block transition that is not allowed: " +
-                    Long.toHexString(cursor.getHeader().getDifficultyTarget()) + " vs " +
-                    Long.toHexString(next.getDifficultyTarget()));
-        }
-    }
-
-    /**
-     * Returns true if any connected wallet considers any transaction in the block to be relevant.
-     */
-    private boolean containsRelevantTransactions(Block block) {
-        // Does not need to be locked.
-        for (Transaction tx : block.transactions) {
-            try {
-                for (final ListenerRegistration<BlockChainListener> registration : listeners) {
-                    if (registration.executor != Threading.SAME_THREAD) continue;
-                    if (registration.listener.isTransactionRelevant(tx)) return true;
-                }
-            } catch (ScriptException e) {
-                // We don't want scripts we don't understand to break the block chain so just note that this tx was
-                // not scanned here and continue.
-                log.warn("Failed to parse a script: " + e.toString());
-            }
-        }
-        return false;
     }
 
     /**

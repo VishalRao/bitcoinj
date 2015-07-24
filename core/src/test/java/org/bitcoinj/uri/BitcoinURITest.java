@@ -23,8 +23,6 @@ import org.bitcoinj.params.TestNet3Params;
 import com.google.common.collect.ImmutableList;
 import org.junit.Test;
 
-import java.io.UnsupportedEncodingException;
-
 import static org.bitcoinj.core.Coin.*;
 import static org.junit.Assert.*;
 
@@ -35,7 +33,7 @@ public class BitcoinURITest {
 
     @Test
     public void testConvertToBitcoinURI() throws Exception {
-        Address goodAddress = new Address(MainNetParams.get(), MAINNET_GOOD_ADDRESS);
+        Address goodAddress = Address.fromBase58(MainNetParams.get(), MAINNET_GOOD_ADDRESS);
         
         // simple example
         assertEquals("bitcoin:" + MAINNET_GOOD_ADDRESS + "?amount=12.34&label=Hello&message=AMessage", BitcoinURI.convertToBitcoinURI(goodAddress, parseCoin("12.34"), "Hello", "AMessage"));
@@ -187,10 +185,9 @@ public class BitcoinURITest {
      * 
      * @throws BitcoinURIParseException
      *             If something goes wrong
-     * @throws UnsupportedEncodingException 
      */
     @Test
-    public void testGood_LabelWithAmpersandAndPlus() throws Exception {
+    public void testGood_LabelWithAmpersandAndPlus() throws BitcoinURIParseException {
         String testString = "Hello Earth & Mars + Venus";
         String encodedLabel = BitcoinURI.encodeURLString(testString);
         testObject = new BitcoinURI(MainNetParams.get(), BitcoinURI.BITCOIN_SCHEME + ":" + MAINNET_GOOD_ADDRESS + "?label="
@@ -203,10 +200,9 @@ public class BitcoinURITest {
      * 
      * @throws BitcoinURIParseException
      *             If something goes wrong
-     * @throws UnsupportedEncodingException 
      */
     @Test
-    public void testGood_LabelWithRussian() throws Exception {
+    public void testGood_LabelWithRussian() throws BitcoinURIParseException {
         // Moscow in Russian in Cyrillic
         String moscowString = "\u041c\u043e\u0441\u043a\u0432\u0430";
         String encodedLabel = BitcoinURI.encodeURLString(moscowString); 
@@ -318,7 +314,7 @@ public class BitcoinURITest {
                 + "?aardvark=true");
         assertEquals("BitcoinURI['aardvark'='true','address'='1KzTSfqjF2iKCduwz59nv2uqh1W2JsTxZH']", testObject.toString());
 
-        assertEquals("true", (String) testObject.getParameterByName("aardvark"));
+        assertEquals("true", testObject.getParameterByName("aardvark"));
 
         // Unknown not required field (isolated)
         try {

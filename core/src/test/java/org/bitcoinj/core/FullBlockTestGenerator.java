@@ -158,7 +158,7 @@ public class FullBlockTestGenerator {
                         outStream.write((int) (params.getPacketMagic() >>> 24));
                         outStream.write((int) (params.getPacketMagic() >>> 16));
                         outStream.write((int) (params.getPacketMagic() >>> 8));
-                        outStream.write((int) (params.getPacketMagic() >>> 0));
+                        outStream.write((int) params.getPacketMagic());
                         byte[] block = ((BlockAndValidity)element).block.bitcoinSerialize();
                         byte[] length = new byte[4];
                         Utils.uint32ToByteArrayBE(block.length, length, 0);
@@ -221,7 +221,7 @@ public class FullBlockTestGenerator {
         {
             Transaction coinbase = b2.block.getTransactions().get(0);
             TransactionOutPoint outpoint = new TransactionOutPoint(params, 0, coinbase.getHash());
-            long[] heights = new long[] {chainHeadHeight + 2};
+            long[] heights = {chainHeadHeight + 2};
             UTXOsMessage result = new UTXOsMessage(params, ImmutableList.of(coinbase.getOutput(0)), heights, b2.getHash(), chainHeadHeight + 2);
             utxo1 = new UTXORule("utxo1", outpoint, result);
             blocks.add(utxo1);
@@ -242,7 +242,7 @@ public class FullBlockTestGenerator {
             TransactionOutPoint outpoint = new TransactionOutPoint(params, 0, coinbase.getHash());
             List<TransactionOutPoint> queries = ImmutableList.of(utxo1.query.get(0), outpoint);
             List<TransactionOutput> results = Lists.asList(null, coinbase.getOutput(0), new TransactionOutput[]{});
-            long[] heights = new long[] {chainHeadHeight + 3};
+            long[] heights = {chainHeadHeight + 3};
             UTXOsMessage result = new UTXOsMessage(params, results, heights, b4.getHash(), chainHeadHeight + 3);
             UTXORule utxo2 = new UTXORule("utxo2", queries, result);
             blocks.add(utxo2);
@@ -981,7 +981,7 @@ public class FullBlockTestGenerator {
         NewBlock b49 = createNextBlock(b44, chainHeadHeight + 16, out15, null);
         byte[] b49MerkleHash = Sha256Hash.ZERO_HASH.getBytes().clone();
         b49MerkleHash[1] = (byte) 0xDE;
-        b49.block.setMerkleRoot(Sha256Hash.create(b49MerkleHash));
+        b49.block.setMerkleRoot(Sha256Hash.of(b49MerkleHash));
         b49.solve();
         blocks.add(new BlockAndValidity(b49, false, true, b44.getHash(), chainHeadHeight + 15, "b49"));
 
@@ -1326,7 +1326,7 @@ public class FullBlockTestGenerator {
         {
             Transaction tx = new Transaction(params);
             tx.addOutput(ZERO, OP_TRUE_SCRIPT);
-            tx.addInput(new Sha256Hash("23c70ed7c0506e9178fc1a987f40a33946d4ad4c962b5ae3a52546da53af0c5c"), 0,
+            tx.addInput(Sha256Hash.wrap("23c70ed7c0506e9178fc1a987f40a33946d4ad4c962b5ae3a52546da53af0c5c"), 0,
                     OP_NOP_SCRIPT);
             b70.addTransaction(tx);
         }
@@ -1502,7 +1502,7 @@ public class FullBlockTestGenerator {
         // Check the UTXO query takes mempool into account.
         {
             TransactionOutPoint outpoint = new TransactionOutPoint(params, 0, b79tx.getHash());
-            long[] heights = new long[] { UTXOsMessage.MEMPOOL_HEIGHT };
+            long[] heights = { UTXOsMessage.MEMPOOL_HEIGHT };
             UTXOsMessage result = new UTXOsMessage(params, ImmutableList.of(b79tx.getOutput(0)), heights, b82.getHash(), chainHeadHeight + 28);
             UTXORule utxo3 = new UTXORule("utxo3", outpoint, result);
             blocks.add(utxo3);

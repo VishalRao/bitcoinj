@@ -23,7 +23,6 @@ import org.junit.Test;
 import static org.bitcoinj.core.Utils.HEX;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -52,4 +51,11 @@ public class VersionedChecksummedBytesTest {
         assertNotSame(a, b);
     }
 
+    @Test
+    public void comparisonCloneEqualTo() throws Exception {
+        VersionedChecksummedBytes a = new VersionedChecksummedBytes(testParams.getAddressHeader(), HEX.decode("fda79a24e50ff70ff42f7d89585da5bd19d9e5cc"));
+        VersionedChecksummedBytes b = a.clone();
+
+        assertTrue(a.compareTo(b) == 0);
+    }
 }

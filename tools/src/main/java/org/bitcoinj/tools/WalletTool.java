@@ -166,6 +166,7 @@ public class WalletTool {
         ADD_KEY,
         ADD_ADDR,
         DELETE_KEY,
+        CURRENT_RECEIVE_ADDR,
         SYNC,
         RESET,
         SEND,
@@ -342,6 +343,7 @@ public class WalletTool {
             case ADD_KEY: addKey(); break;
             case ADD_ADDR: addAddr(); break;
             case DELETE_KEY: deleteKey(); break;
+            case CURRENT_RECEIVE_ADDR: currentReceiveAddr(); break;
             case RESET: reset(); break;
             case SYNC: syncChain(); break;
             case SEND:
@@ -499,7 +501,7 @@ public class WalletTool {
             return;
         }
         try {
-            Address address = new Address(params, addr);
+            Address address = Address.fromBase58(params, addr);
             // If no creation time is specified, assume genesis (zero).
             wallet.addWatchedAddress(address, getCreationTimeSeconds());
         } catch (AddressFormatException e) {
@@ -531,7 +533,7 @@ public class WalletTool {
                         t.addOutput(value, key);
                     } else {
                         // Treat as an address.
-                        Address addr = new Address(params, destination);
+                        Address addr = Address.fromBase58(params, destination);
                         t.addOutput(value, addr);
                     }
                 } catch (WrongNetworkException e) {
@@ -586,7 +588,7 @@ public class WalletTool {
             // Wait for peers to connect, the tx to be sent to one of them and for it to be propagated across the
             // network. Once propagation is complete and we heard the transaction back from all our peers, it will
             // be committed to the wallet.
-            peers.broadcastTransaction(t).get();
+            peers.broadcastTransaction(t).future().get();
             // Hack for regtest/single peer mode, as we're about to shut down and won't get an ACK from the remote end.
             List<Peer> peerList = peers.getConnectedPeers();
             if (peerList.size() == 1)
@@ -699,7 +701,7 @@ public class WalletTool {
             if (future == null) {
                 // No payment_url for submission so, broadcast and wait.
                 peers.start();
-                peers.broadcastTransaction(req.tx).get();
+                peers.broadcastTransaction(req.tx).future().get();
             } else {
                 PaymentProtocol.Ack ack = future.get();
                 wallet.commitTx(req.tx);
@@ -760,8 +762,7 @@ public class WalletTool {
             case BLOCK:
                 peers.addEventListener(new AbstractPeerEventListener() {
                     @Override
-                    public void onBlocksDownloaded(Peer peer, Block block, int blocksLeft) {
-                        super.onBlocksDownloaded(peer, block, blocksLeft);
+                    public void onBlocksDownloaded(Peer peer, Block block, @Nullable FilteredBlock filteredBlock, int blocksLeft) {
                         // Check if we already ran. This can happen if a block being received triggers download of more
                         // blocks, or if we receive another block whilst the peer group is shutting down.
                         if (latch.getCount() == 0) return;
@@ -825,7 +826,7 @@ public class WalletTool {
             chain = new FullPrunedBlockChain(params, wallet, s);
         }
         // This will ensure the wallet is saved when it changes.
-        wallet.autosaveToFile(walletFile, 200, TimeUnit.MILLISECONDS, null);
+        wallet.autosaveToFile(walletFile, 5, TimeUnit.SECONDS, null);
         if (options.has("tor")) {
             try {
                 peers = PeerGroup.newWithTor(params, chain, new TorClient());
@@ -994,7 +995,7 @@ public class WalletTool {
             if (data.startsWith("5J") || data.startsWith("5H") || data.startsWith("5K")) {
                 DumpedPrivateKey dpk;
                 try {
-                    dpk = new DumpedPrivateKey(params, data);
+                    dpk = DumpedPrivateKey.fromBase58(params, data);
                 } catch (AddressFormatException e) {
                     System.err.println("Could not parse dumped private key " + data);
                     return;
@@ -1060,7 +1061,7 @@ public class WalletTool {
             key = wallet.findKeyFromPubKey(Hex.decode(pubkey));
         } else {
             try {
-                Address address = new Address(wallet.getParams(), addr);
+                Address address = Address.fromBase58(wallet.getParams(), addr);
                 key = wallet.findKeyFromPubHash(address.getHash160());
             } catch (AddressFormatException e) {
                 System.err.println(addr + " does not parse as a Bitcoin address of the right network parameters.");
@@ -1072,6 +1073,11 @@ public class WalletTool {
             return;
         }
         wallet.removeKey(key);
+    }
+
+    private static void currentReceiveAddr() {
+        ECKey key = wallet.currentReceiveKey();
+        System.out.println(key.toAddress(params) + " " + key);
     }
 
     private static void dumpWallet() throws BlockStoreException {

@@ -19,6 +19,7 @@ package org.bitcoinj.store;
 
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.core.Transaction.Purpose;
 import org.bitcoinj.core.TransactionConfidence.ConfidenceType;
 import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.params.MainNetParams;
@@ -64,6 +65,7 @@ public class WalletProtobufSerializerTest {
     @Before
     public void setUp() throws Exception {
         BriefLogFormatter.initVerbose();
+        Context ctx = new Context(params);
         myWatchedKey = new ECKey();
         myWallet = new Wallet(params);
         myKey = new ECKey();
@@ -130,6 +132,18 @@ public class WalletProtobufSerializerTest {
                 t1p.getTransactionInput(0).getTransactionOutPointHash().toByteArray());
         assertEquals(0, t1p.getTransactionInput(0).getTransactionOutPointIndex());
         assertEquals(t1p.getTransactionOutput(0).getValue(), v1.value);
+    }
+
+    @Test
+    public void raiseFeeTx() throws Exception {
+        // Check basic tx serialization.
+        Coin v1 = COIN;
+        Transaction t1 = createFakeTx(params, v1, myAddress);
+        t1.setPurpose(Purpose.RAISE_FEE);
+        myWallet.receivePending(t1, null);
+        Wallet wallet1 = roundTrip(myWallet);
+        Transaction t1copy = wallet1.getTransaction(t1.getHash());
+        assertEquals(Purpose.RAISE_FEE, t1copy.getPurpose());
     }
 
     @Test
@@ -331,7 +345,7 @@ public class WalletProtobufSerializerTest {
     }
 
     @Test
-    public void testExtensions() throws Exception {
+    public void extensions() throws Exception {
         myWallet.addExtension(new FooWalletExtension("com.whatever.required", true));
         Protos.Wallet proto = new WalletProtobufSerializer().walletToProto(myWallet);
         // Initial extension is mandatory: try to read it back into a wallet that doesn't know about it.
@@ -352,6 +366,35 @@ public class WalletProtobufSerializerTest {
         Protos.Wallet proto2 = new WalletProtobufSerializer().walletToProto(wallet2);
         Wallet wallet5 = new WalletProtobufSerializer().readWallet(params, null, proto2);
         assertEquals(0, wallet5.getExtensions().size());
+    }
+
+    @Test
+    public void extensionsWithError() throws Exception {
+        WalletExtension extension = new WalletExtension() {
+            @Override
+            public String getWalletExtensionID() {
+                return "test";
+            }
+
+            @Override
+            public boolean isWalletExtensionMandatory() {
+                return false;
+            }
+
+            @Override
+            public byte[] serializeWalletExtension() {
+                return new byte[0];
+            }
+
+            @Override
+            public void deserializeWalletExtension(Wallet containingWallet, byte[] data) throws Exception {
+                throw new NullPointerException();  // Something went wrong!
+            }
+        };
+        myWallet.addExtension(extension);
+        Protos.Wallet proto = new WalletProtobufSerializer().walletToProto(myWallet);
+        Wallet wallet = new WalletProtobufSerializer().readWallet(params, new WalletExtension[]{extension}, proto);
+        assertEquals(0, wallet.getExtensions().size());
     }
 
     @Test(expected = UnreadableWalletException.FutureVersion.class)

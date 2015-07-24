@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2011 Google Inc.
  * Copyright 2014 Andreas Schildbach
  *
@@ -17,15 +17,21 @@
 
 package org.bitcoinj.core;
 
-import org.bitcoinj.params.*;
-import org.bitcoinj.script.Script;
-import org.bitcoinj.script.ScriptOpCodes;
 import com.google.common.base.Objects;
+import org.bitcoinj.core.Block;
+import org.bitcoinj.core.StoredBlock;
+import org.bitcoinj.core.VerificationException;
+import org.bitcoinj.net.discovery.*;
+import org.bitcoinj.params.*;
+import org.bitcoinj.script.*;
+import org.bitcoinj.store.BlockStore;
+import org.bitcoinj.store.BlockStoreException;
 
-import javax.annotation.Nullable;
-import java.io.ByteArrayOutputStream;
-import java.io.Serializable;
-import java.math.BigInteger;
+import org.bitcoinj.utils.MonetaryFormat;
+
+import javax.annotation.*;
+import java.io.*;
+import java.math.*;
 import java.util.*;
 
 import static org.bitcoinj.core.Coin.*;
@@ -38,7 +44,7 @@ import static org.bitcoinj.core.Coin.*;
  * intended for unit testing and local app development purposes. Although this class contains some aliases for
  * them, you are encouraged to call the static get() methods on each specific params class directly.</p>
  */
-public abstract class NetworkParameters implements Serializable {
+public abstract class NetworkParameters {
     /**
      * The protocol version this library implements.
      */
@@ -95,6 +101,8 @@ public abstract class NetworkParameters implements Serializable {
     
     protected int[] acceptableAddressCodes;
     protected String[] dnsSeeds;
+    protected int[] addrSeeds;
+    protected HttpDiscovery.Details[] httpSeeds = {};
     protected Map<Integer, Sha256Hash> checkpoints = new HashMap<Integer, Sha256Hash>();
 
     protected NetworkParameters() {
@@ -195,8 +203,7 @@ public abstract class NetworkParameters implements Serializable {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        NetworkParameters other = (NetworkParameters) o;
-        return getId().equals(other.getId());
+        return getId().equals(((NetworkParameters)o).getId());
     }
 
     @Override
@@ -241,6 +248,13 @@ public abstract class NetworkParameters implements Serializable {
     }
 
     /**
+     * Throws an exception if the block's difficulty is not correct.
+     *
+     * @throws VerificationException if the block's difficulty is not correct.
+     */
+    public abstract void checkDifficultyTransitions(StoredBlock storedPrev, Block next, final BlockStore blockStore) throws VerificationException, BlockStoreException;
+
+    /**
      * Returns true if the block height is either not a checkpoint, or is a checkpoint and the hash matches.
      */
     public boolean passesCheckpoint(int height, Sha256Hash hash) {
@@ -263,6 +277,16 @@ public abstract class NetworkParameters implements Serializable {
     /** Returns DNS names that when resolved, give IP addresses of active peers. */
     public String[] getDnsSeeds() {
         return dnsSeeds;
+    }
+
+    /** Returns IP address of active peers. */
+    public int[] getAddrSeeds() {
+        return addrSeeds;
+    }
+
+    /** Returns discovery objects for seeds implementing the Cartographer protocol. See {@link org.bitcoinj.net.discovery.HttpDiscovery} for more info. */
+    public HttpDiscovery.Details[] getHttpSeeds() {
+        return httpSeeds;
     }
 
     /**
@@ -363,4 +387,34 @@ public abstract class NetworkParameters implements Serializable {
     public int getBip32HeaderPriv() {
         return bip32HeaderPriv;
     }
+
+    /**
+     * Returns the number of coins that will be produced in total, on this
+     * network. Where not applicable, a very large number of coins is returned
+     * instead (i.e. the main coin issue for Dogecoin).
+     */
+    public abstract Coin getMaxMoney();
+
+    /**
+     * Any standard (ie pay-to-address) output smaller than this value will
+     * most likely be rejected by the network.
+     */
+    public abstract Coin getMinNonDustOutput();
+
+    /**
+     * The monetary object for this currency.
+     */
+    public abstract MonetaryFormat getMonetaryFormat();
+
+    /**
+     * Scheme part for URIs, for example "bitcoin".
+     */
+    public abstract String getUriScheme();
+
+    /**
+     * Returns whether this network has a maximum number of coins (finite supply) or
+     * not. Always returns true for Bitcoin, but exists to be overriden for other
+     * networks.
+     */
+    public abstract boolean hasMaxMoney();
 }

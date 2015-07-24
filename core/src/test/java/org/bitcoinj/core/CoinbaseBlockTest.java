@@ -19,6 +19,7 @@ package org.bitcoinj.core;
 import org.bitcoinj.core.AbstractBlockChain.NewBlockType;
 import org.bitcoinj.core.Wallet.BalanceType;
 import org.bitcoinj.params.MainNetParams;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -44,6 +45,11 @@ public class CoinbaseBlockTest {
     private static final long BLOCK_NONCE = 3973947400L;
     private static final Coin BALANCE_AFTER_BLOCK = Coin.valueOf(22223642);
 
+    @Before
+    public void setUp() throws Exception {
+        Context context = new Context(params);
+    }
+
     @Test
     public void testReceiveCoinbaseTransaction() throws Exception {
         // Block 169482 (hash 0000000000000756935f1ee9d5987857b604046f846d3df56d024cdb5f368665)
@@ -63,10 +69,10 @@ public class CoinbaseBlockTest {
         StoredBlock storedBlock = new StoredBlock(block, BigInteger.ONE, BLOCK_OF_INTEREST); // Nonsense work - not used in test.
 
         // Create a wallet contain the miner's key that receives a spend from a coinbase.
-        ECKey miningKey = (new DumpedPrivateKey(params, MINING_PRIVATE_KEY)).getKey();
+        ECKey miningKey = DumpedPrivateKey.fromBase58(params, MINING_PRIVATE_KEY).getKey();
         assertNotNull(miningKey);
-
-        Wallet wallet = new Wallet(params);
+        Context context = new Context(params);
+        Wallet wallet = new Wallet(context);
         wallet.importKey(miningKey);
 
         // Initial balance should be zero by construction.

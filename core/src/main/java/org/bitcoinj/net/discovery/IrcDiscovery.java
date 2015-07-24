@@ -185,7 +185,7 @@ public class IrcDiscovery implements PeerDiscovery {
                 log.warn("Exception whilst closing IRC discovery: " + e.toString());
             }
         }
-        return addresses.toArray(new InetSocketAddress[]{});
+        return addresses.toArray(new InetSocketAddress[addresses.size()]);
     }
 
     private void logAndSend(String command) throws Exception {
@@ -197,7 +197,7 @@ public class IrcDiscovery implements PeerDiscovery {
     static ArrayList<InetSocketAddress> parseUserList(String[] userNames) throws UnknownHostException {
         ArrayList<InetSocketAddress> addresses = new ArrayList<InetSocketAddress>();
         for (String user : userNames) {
-            // All BitCoin peers start their nicknames with a 'u' character.
+            // All peers start their nicknames with a 'u' character.
             if (!user.startsWith("u")) {
                 continue;
             }
@@ -208,7 +208,7 @@ public class IrcDiscovery implements PeerDiscovery {
             byte[] addressBytes;
             try {
                 // Strip off the "u" before decoding. Note that it's possible for anyone to join these IRC channels and
-                // so simply beginning with "u" does not imply this is a valid BitCoin encoded address.
+                // so simply beginning with "u" does not imply this is a valid encoded address.
                 //
                 // decodeChecked removes the checksum from the returned bytes.
                 addressBytes = Base58.decodeChecked(user.substring(1));
@@ -222,7 +222,7 @@ public class IrcDiscovery implements PeerDiscovery {
                 continue;
             }
 
-            byte[] ipBytes = new byte[]{addressBytes[0], addressBytes[1], addressBytes[2], addressBytes[3]};
+            byte[] ipBytes = {addressBytes[0], addressBytes[1], addressBytes[2], addressBytes[3]};
             int port = Utils.readUint16BE(addressBytes, 4);
 
             InetAddress ip;

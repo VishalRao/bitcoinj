@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2011 Google Inc.
  * Copyright 2014 Andreas Schildbach
  *
@@ -27,13 +27,12 @@ import java.util.Arrays;
 import static com.google.common.base.Preconditions.checkState;
 
 /**
- * <p>A Message is a data structure that can be serialized/deserialized using both the Bitcoin proprietary serialization
- * format and built-in Java object serialization. Specific types of messages that are used both in the block chain,
- * and on the wire, are derived from this class.</p>
+ * <p>A Message is a data structure that can be serialized/deserialized using the Bitcoin serialization format.
+ * Specific types of messages that are used both in the block chain, and on the wire, are derived from this
+ * class.</p>
  */
-public abstract class Message implements Serializable {
+public abstract class Message {
     private static final Logger log = LoggerFactory.getLogger(Message.class);
-    private static final long serialVersionUID = -3561053461717079135L;
 
     public static final int MAX_SIZE = 0x02000000; // 32MB
 
@@ -43,31 +42,25 @@ public abstract class Message implements Serializable {
     private static final boolean SELF_CHECK = false;
 
     // The offset is how many bytes into the provided byte array this message payload starts at.
-    protected transient int offset;
+    protected int offset;
     // The cursor keeps track of where we are in the byte array as we parse it.
     // Note that it's relative to the start of the array NOT the start of the message payload.
-    protected transient int cursor;
+    protected int cursor;
 
-    protected transient int length = UNKNOWN_LENGTH;
+    protected int length = UNKNOWN_LENGTH;
 
     // The raw message payload bytes themselves.
-    protected transient byte[] payload;
+    protected byte[] payload;
 
-    protected transient boolean parsed = false;
-    protected transient boolean recached = false;
-    protected transient final boolean parseLazy;
-    protected transient final boolean parseRetain;
+    protected boolean parsed = false;
+    protected boolean recached = false;
+    protected final boolean parseLazy;
+    protected final boolean parseRetain;
 
-    protected transient int protocolVersion;
+    protected int protocolVersion;
 
-    protected transient byte[] checksum;
-
-    // This will be saved by subclasses that implement Serializable.
     protected NetworkParameters params;
 
-    /**
-     * This exists for the Java serialization framework to use only.
-     */
     protected Message() {
         parsed = true;
         parseLazy = false;
@@ -151,9 +144,7 @@ public abstract class Message implements Serializable {
     }
 
     // These methods handle the serialization/deserialization using the custom Bitcoin protocol.
-    // It's somewhat painful to work with in Java, so some of these objects support a second
-    // serialization mechanism - the standard Java serialization system. This is used when things
-    // are serialized to the wallet.
+
     abstract void parse() throws ProtocolException;
 
     /**
@@ -216,7 +207,6 @@ public abstract class Message implements Serializable {
      */
     protected void unCache() {
         maybeParse();
-        checksum = null;
         payload = null;
         recached = false;
     }
@@ -253,26 +243,6 @@ public abstract class Message implements Serializable {
 
     public boolean isRecached() {
         return recached;
-    }
-
-    /**
-     * Should only used by BitcoinSerializer for cached checksum
-     *
-     * @return the checksum
-     */
-    byte[] getChecksum() {
-        return checksum;
-    }
-
-    /**
-     * Should only used by BitcoinSerializer for caching checksum
-     *
-     * @param checksum the checksum to set
-     */
-    void setChecksum(byte[] checksum) {
-        if (checksum.length != 4)
-            throw new IllegalArgumentException("Checksum length must be 4 bytes, actual length: " + checksum.length);
-        this.checksum = checksum;
     }
 
     /**
@@ -357,7 +327,7 @@ public abstract class Message implements Serializable {
      * @param stream
      * @throws IOException
      */
-    final public void bitcoinSerialize(OutputStream stream) throws IOException {
+    public final void bitcoinSerialize(OutputStream stream) throws IOException {
         // 1st check for cached bytes.
         if (payload != null && length != UNKNOWN_LENGTH) {
             stream.write(payload, offset, length);
@@ -407,20 +377,6 @@ public abstract class Message implements Serializable {
         }
     }
 
-    Sha256Hash readHash() throws ProtocolException {
-        try {
-            byte[] hash = new byte[32];
-            System.arraycopy(payload, cursor, hash, 0, 32);
-            // We have to flip it around, as it's been read off the wire in little endian.
-            // Not the most efficient way to do this but the clearest.
-            hash = Utils.reverseBytes(hash);
-            cursor += 32;
-            return new Sha256Hash(hash);
-        } catch (IndexOutOfBoundsException e) {
-            throw new ProtocolException(e);
-        }
-    }
-
     long readInt64() throws ProtocolException {
         try {
             long u = Utils.readInt64(payload, cursor);
@@ -432,16 +388,8 @@ public abstract class Message implements Serializable {
     }
 
     BigInteger readUint64() throws ProtocolException {
-        try {
-            // Java does not have an unsigned 64 bit type. So scrape it off the wire then flip.
-            byte[] valbytes = new byte[8];
-            System.arraycopy(payload, cursor, valbytes, 0, 8);
-            valbytes = Utils.reverseBytes(valbytes);
-            cursor += valbytes.length;
-            return new BigInteger(valbytes);
-        } catch (IndexOutOfBoundsException e) {
-            throw new ProtocolException(e);
-        }
+        // Java does not have an unsigned 64 bit type. So scrape it off the wire then flip.
+        return new BigInteger(Utils.reverseBytes(readBytes(8)));
     }
 
     long readVarInt() throws ProtocolException {
@@ -460,7 +408,7 @@ public abstract class Message implements Serializable {
 
     byte[] readBytes(int length) throws ProtocolException {
         if (length > MAX_SIZE) {
-            throw new ProtocolException("Claimed byte array length too large: " + length);
+            throw new ProtocolException("Claimed value length too large: " + length);
         }
         try {
             byte[] b = new byte[length];
@@ -478,31 +426,16 @@ public abstract class Message implements Serializable {
     }
 
     String readStr() throws ProtocolException {
-        try {
-            VarInt varInt = new VarInt(payload, cursor);
-            if (varInt.value == 0) {
-                cursor += 1;
-                return "";
-            }
-            cursor += varInt.getOriginalSizeInBytes();
-            if (varInt.value > MAX_SIZE) {
-                throw new ProtocolException("Claimed var_str length too large: " + varInt.value);
-            }
-            byte[] characters = new byte[(int) varInt.value];
-            System.arraycopy(payload, cursor, characters, 0, characters.length);
-            cursor += characters.length;
-            try {
-                return new String(characters, "UTF-8");
-            } catch (UnsupportedEncodingException e) {
-                throw new RuntimeException(e);  // Cannot happen, UTF-8 is always supported.
-            }
-        } catch (ArrayIndexOutOfBoundsException e) {
-            throw new ProtocolException(e);
-        } catch (IndexOutOfBoundsException e) {
-            throw new ProtocolException(e);
-        }
+        long length = readVarInt();
+        return length == 0 ? "" : Utils.toString(readBytes((int) length), "UTF-8"); // optimization for empty strings
     }
-    
+
+    Sha256Hash readHash() throws ProtocolException {
+        // We have to flip it around, as it's been read off the wire in little endian.
+        // Not the most efficient way to do this but the clearest.
+        return Sha256Hash.wrapReversed(readBytes(32));
+    }
+
     boolean hasMoreBytes() {
         return cursor < payload.length;
     }
@@ -513,7 +446,6 @@ public abstract class Message implements Serializable {
     }
 
     public static class LazyParseException extends RuntimeException {
-        private static final long serialVersionUID = 6971943053112975594L;
 
         public LazyParseException(String message, Throwable cause) {
             super(message, cause);
