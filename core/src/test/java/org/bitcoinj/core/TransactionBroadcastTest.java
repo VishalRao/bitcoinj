@@ -18,6 +18,7 @@
 package org.bitcoinj.core;
 
 import com.google.common.util.concurrent.*;
+import org.bitcoinj.core.listeners.AbstractWalletEventListener;
 import org.bitcoinj.params.*;
 import org.bitcoinj.testing.*;
 import org.bitcoinj.utils.*;
@@ -236,7 +237,7 @@ public class TransactionBroadcastTest extends TestWithPeerGroup {
         assertEquals(transactions[0], sendResult.tx);
         assertEquals(1, transactions[0].getConfidence().numBroadcastPeers());
         // Confirm it.
-        Block b2 = FakeTxBuilder.createFakeBlock(blockStore, t1).block;
+        Block b2 = FakeTxBuilder.createFakeBlock(blockStore, Block.BLOCK_HEIGHT_GENESIS, t1).block;
         inbound(p1, b2);
         pingAndWait(p1);
         assertNull(outbound(p1));

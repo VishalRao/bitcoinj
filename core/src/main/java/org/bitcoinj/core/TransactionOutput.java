@@ -69,15 +69,11 @@ public class TransactionOutput extends ChildMessage {
      * @param params NetworkParameters object.
      * @param payload Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first payload byte within the array.
-     * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
-     * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
-     * If true and the backing byte array is invalidated due to modification of a field then 
-     * the cached bytes may be repopulated and retained if the message is serialized again in the future.
+     * @param serializer the serializer to use for this message.
      * @throws ProtocolException
      */
-    public TransactionOutput(NetworkParameters params, @Nullable Transaction parent, byte[] payload, int offset,
-                             boolean parseLazy, boolean parseRetain) throws ProtocolException {
-        super(params, payload, offset, parent, parseLazy, parseRetain, UNKNOWN_LENGTH);
+    public TransactionOutput(NetworkParameters params, @Nullable Transaction parent, byte[] payload, int offset, MessageSerializer serializer) throws ProtocolException {
+        super(params, payload, offset, parent, serializer, UNKNOWN_LENGTH);
         availableForSpending = true;
     }
 
@@ -114,7 +110,6 @@ public class TransactionOutput extends ChildMessage {
 
     public Script getScriptPubKey() throws ScriptException {
         if (scriptPubKey == null) {
-            maybeParse();
             scriptPubKey = new Script(scriptBytes);
         }
         return scriptPubKey;
@@ -158,21 +153,16 @@ public class TransactionOutput extends ChildMessage {
     }
 
     @Override
-    protected void parseLite() throws ProtocolException {
+    protected void parse() throws ProtocolException {
         value = readInt64();
         scriptLen = (int) readVarInt();
         length = cursor - offset + scriptLen;
-    }
-
-    @Override
-    void parse() throws ProtocolException {
         scriptBytes = readBytes(scriptLen);
     }
 
     @Override
     protected void bitcoinSerializeToStream(OutputStream stream) throws IOException {
         checkNotNull(scriptBytes);
-        maybeParse();
         Utils.int64ToByteStreamLE(value, stream);
         // TODO: Move script serialization into the Script class, where it belongs.
         stream.write(new VarInt(scriptBytes.length).encode());
@@ -184,7 +174,6 @@ public class TransactionOutput extends ChildMessage {
      * receives.
      */
     public Coin getValue() {
-        maybeParse();
         try {
             return Coin.valueOf(value);
         } catch (IllegalArgumentException e) {
@@ -290,7 +279,6 @@ public class TransactionOutput extends ChildMessage {
      * @return the scriptBytes
     */
     public byte[] getScriptBytes() {
-        maybeParse();
         return scriptBytes;
     }
 

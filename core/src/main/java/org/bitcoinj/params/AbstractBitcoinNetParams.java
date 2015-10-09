@@ -1,5 +1,6 @@
 /*
  * Copyright 2013 Google Inc.
+ * Copyright 2015 Andreas Schildbach
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +18,8 @@
 package org.bitcoinj.params;
 
 import java.math.BigInteger;
+import java.util.EnumSet;
+import java.util.Set;
 
 import org.bitcoinj.core.Block;
 import org.bitcoinj.core.Coin;
@@ -30,6 +33,10 @@ import org.bitcoinj.store.BlockStore;
 import org.bitcoinj.store.BlockStoreException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.bitcoinj.core.BitcoinSerializer;
+import org.bitcoinj.core.VerificationFlags;
+import org.bitcoinj.utils.VersionTally;
 
 /**
  * Parameters for Bitcoin-like networks.
@@ -115,7 +122,7 @@ public abstract class AbstractBitcoinNetParams extends NetworkParameters {
 
         if (newTargetCompact != receivedTargetCompact)
             throw new VerificationException("Network provided difficulty bits do not match what was calculated: " +
-                    newTargetCompact + " vs " + receivedTargetCompact);
+                    Long.toHexString(newTargetCompact) + " vs " + Long.toHexString(receivedTargetCompact));
     }
 
     @Override
@@ -131,6 +138,11 @@ public abstract class AbstractBitcoinNetParams extends NetworkParameters {
     @Override
     public MonetaryFormat getMonetaryFormat() {
         return new MonetaryFormat();
+    }
+
+    @Override
+    public BitcoinSerializer getSerializer(boolean parseRetain) {
+        return new BitcoinSerializer(this, parseRetain);
     }
 
     @Override

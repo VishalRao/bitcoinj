@@ -433,7 +433,10 @@ public class DeterministicKey extends ECKey {
             downCursor = HDKeyDerivation.deriveChildKey(downCursor, num);
         }
         // downCursor is now the same key as us, but with private key bytes.
-        checkState(downCursor.pub.equals(pub));
+        // If it's not, it means we tried decrypting with an invalid password and earlier checks e.g. for padding didn't
+        // catch it.
+        if (!downCursor.pub.equals(pub))
+            throw new KeyCrypterException("Could not decrypt bytes");
         return checkNotNull(downCursor.priv);
     }
 
@@ -498,13 +501,10 @@ public class DeterministicKey extends ECKey {
     /**
       * Deserialize a base-58-encoded HD Key.
       *  @param parent The parent node in the given key's deterministic hierarchy.
+      *  @throws IllegalArgumentException if the base58 encoded key could not be parsed.
       */
     public static DeterministicKey deserializeB58(@Nullable DeterministicKey parent, String base58, NetworkParameters params) {
-        try {
-            return deserialize(params, Base58.decodeChecked(base58), parent);
-        } catch (AddressFormatException e) {
-            throw new IllegalArgumentException(e);
-        }
+        return deserialize(params, Base58.decodeChecked(base58), parent);
     }
 
     /**

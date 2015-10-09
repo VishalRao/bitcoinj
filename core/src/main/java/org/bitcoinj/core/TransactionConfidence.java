@@ -22,7 +22,6 @@ import com.google.common.util.concurrent.*;
 import org.bitcoinj.utils.*;
 
 import javax.annotation.*;
-import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -193,7 +192,7 @@ public class TransactionConfidence {
      * the best chain). If you want to know when the transaction gets buried under another block, consider using
      * a future from {@link #getDepthFuture(int)}.</p>
      */
-    public void addEventListener(Listener listener, Executor executor) {
+    public void addEventListener(Executor executor, Listener listener) {
         checkNotNull(listener);
         listeners.addIfAbsent(new ListenerRegistration<Listener>(listener, executor));
         pinnedConfidenceObjects.add(this);
@@ -210,7 +209,7 @@ public class TransactionConfidence {
      * confidence object to determine the new depth.</p>
      */
     public void addEventListener(Listener listener) {
-        addEventListener(listener, Threading.USER_THREAD);
+        addEventListener(Threading.USER_THREAD, listener);
     }
 
     public boolean removeEventListener(Listener listener) {
@@ -457,14 +456,14 @@ public class TransactionConfidence {
         if (getDepthInBlocks() >= depth) {
             result.set(this);
         }
-        addEventListener(new Listener() {
+        addEventListener(executor, new Listener() {
             @Override public void onConfidenceChanged(TransactionConfidence confidence, ChangeReason reason) {
                 if (getDepthInBlocks() >= depth) {
                     removeEventListener(this);
                     result.set(confidence);
                 }
             }
-        }, executor);
+        });
         return result;
     }
 

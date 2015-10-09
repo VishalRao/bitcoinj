@@ -52,30 +52,24 @@ public abstract class Message {
     // The raw message payload bytes themselves.
     protected byte[] payload;
 
-    protected boolean parsed = false;
     protected boolean recached = false;
-    protected final boolean parseLazy;
-    protected final boolean parseRetain;
+    protected MessageSerializer serializer;
 
     protected int protocolVersion;
 
     protected NetworkParameters params;
 
     protected Message() {
-        parsed = true;
-        parseLazy = false;
-        parseRetain = false;
+        serializer = DummySerializer.DEFAULT;
     }
 
-    Message(NetworkParameters params) {
+    protected Message(NetworkParameters params) {
         this.params = params;
-        parsed = true;
-        parseLazy = false;
-        parseRetain = false;
+        serializer = params.getDefaultSerializer();
     }
 
-    Message(NetworkParameters params, byte[] payload, int offset, int protocolVersion) throws ProtocolException {
-        this(params, payload, offset, protocolVersion, false, false, UNKNOWN_LENGTH);
+    protected Message(NetworkParameters params, byte[] payload, int offset, int protocolVersion) throws ProtocolException {
+        this(params, payload, offset, protocolVersion, params.getDefaultSerializer(), UNKNOWN_LENGTH);
     }
 
     /**
@@ -84,47 +78,35 @@ public abstract class Message {
      * @param payload Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first payload byte within the array.
      * @param protocolVersion Bitcoin protocol version.
-     * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
-     * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
-     * If true and the backing byte array is invalidated due to modification of a field then 
-     * the cached bytes may be repopulated and retained if the message is serialized again in the future.
+     * @param serializer the serializer to use for this message.
      * @param length The length of message payload if known.  Usually this is provided when deserializing of the wire
      * as the length will be provided as part of the header.  If unknown then set to Message.UNKNOWN_LENGTH
      * @throws ProtocolException
      */
-    Message(NetworkParameters params, byte[] payload, int offset, int protocolVersion, boolean parseLazy, boolean parseRetain, int length) throws ProtocolException {
-        this.parseLazy = parseLazy;
-        this.parseRetain = parseRetain;
+    protected Message(NetworkParameters params, byte[] payload, int offset, int protocolVersion, MessageSerializer serializer, int length) throws ProtocolException {
+        this.serializer = serializer;
         this.protocolVersion = protocolVersion;
         this.params = params;
         this.payload = payload;
         this.cursor = this.offset = offset;
         this.length = length;
-        if (parseLazy) {
-            parseLite();
-        } else {
-            parseLite();
-            parse();
-            parsed = true;
-        }
+
+        parse();
 
         if (this.length == UNKNOWN_LENGTH)
-            checkState(false, "Length field has not been set in constructor for %s after %s parse. " +
-                              "Refer to Message.parseLite() for detail of required Length field contract.",
-                       getClass().getSimpleName(), parseLazy ? "lite" : "full");
+            checkState(false, "Length field has not been set in constructor for %s after parse.",
+                       getClass().getSimpleName());
         
         if (SELF_CHECK) {
             selfCheck(payload, offset);
         }
         
-        if (parseRetain || !parsed)
-            return;
-        this.payload = null;
+        if (!serializer.isParseRetainMode())
+            this.payload = null;
     }
 
     private void selfCheck(byte[] payload, int offset) {
         if (!(this instanceof VersionMessage)) {
-            maybeParse();
             byte[] payloadBytes = new byte[cursor - offset];
             System.arraycopy(payload, offset, payloadBytes, 0, cursor - offset);
             byte[] reserialized = bitcoinSerialize();
@@ -136,77 +118,24 @@ public abstract class Message {
     }
 
     Message(NetworkParameters params, byte[] payload, int offset) throws ProtocolException {
-        this(params, payload, offset, NetworkParameters.PROTOCOL_VERSION, false, false, UNKNOWN_LENGTH);
+        this(params, payload, offset, NetworkParameters.PROTOCOL_VERSION, params.getDefaultSerializer(), UNKNOWN_LENGTH);
     }
 
-    Message(NetworkParameters params, byte[] payload, int offset, boolean parseLazy, boolean parseRetain, int length) throws ProtocolException {
-        this(params, payload, offset, NetworkParameters.PROTOCOL_VERSION, parseLazy, parseRetain, length);
+    Message(NetworkParameters params, byte[] payload, int offset, MessageSerializer serializer, int length) throws ProtocolException {
+        this(params, payload, offset, NetworkParameters.PROTOCOL_VERSION, serializer, length);
     }
 
     // These methods handle the serialization/deserialization using the custom Bitcoin protocol.
 
-    abstract void parse() throws ProtocolException;
+    protected abstract void parse() throws ProtocolException;
 
     /**
-     * Perform the most minimal parse possible to calculate the length of the message payload.
-     * This is only required for subclasses of ChildMessage as root level messages will have their length passed
-     * into the constructor.
-     * <p/>
-     * Implementations should adhere to the following contract:  If parseLazy = true the 'length'
-     * field must be set before returning.  If parseLazy = false the length field must be set either
-     * within the parseLite() method OR the parse() method.  The overriding requirement is that length
-     * must be set to non UNKNOWN_MESSAGE value by the time the constructor exits.
-     *
-     * @return
-     * @throws ProtocolException
-     */
-    protected abstract void parseLite() throws ProtocolException;
-
-    /**
-     * Ensure the object is parsed if needed.  This should be called in every getter before returning a value.
-     * If the lazy parse flag is not set this is a method returns immediately.
-     */
-    protected synchronized void maybeParse() {
-        if (parsed || payload == null)
-            return;
-        try {
-            parse();
-            parsed = true;
-            if (!parseRetain)
-                payload = null;
-        } catch (ProtocolException e) {
-            throw new LazyParseException("ProtocolException caught during lazy parse.  For safe access to fields call ensureParsed before attempting read or write access", e);
-        }
-    }
-
-    /**
-     * In lazy parsing mode access to getters and setters may throw an unchecked LazyParseException.  If guaranteed safe access is required
-     * this method will force parsing to occur immediately thus ensuring LazyParseExeption will never be thrown from this Message.
-     * If the Message contains child messages (e.g. a Block containing Transaction messages) this will not force child messages to parse.
-     * <p/>
-     * This could be overidden for Transaction and it's child classes to ensure the entire tree of Message objects is parsed.
-     *
-     * @throws ProtocolException
-     */
-    public void ensureParsed() throws ProtocolException {
-        try {
-            maybeParse();
-        } catch (LazyParseException e) {
-            if (e.getCause() instanceof ProtocolException)
-                throw (ProtocolException) e.getCause();
-            throw new ProtocolException(e);
-        }
-    }
-
-    /**
-     * To be called before any change of internal values including any setters.  This ensures any cached byte array is
-     * removed after performing a lazy parse if necessary to ensure the object is fully populated.
-     * <p/>
-     * Child messages of this object(e.g. Transactions belonging to a Block) will not have their internal byte caches
-     * invalidated unless they are also modified internally.
+     * <p>To be called before any change of internal values including any setters. This ensures any cached byte array is
+     * removed.<p/>
+     * <p>Child messages of this object(e.g. Transactions belonging to a Block) will not have their internal byte caches
+     * invalidated unless they are also modified internally.</p>
      */
     protected void unCache() {
-        maybeParse();
         payload = null;
         recached = false;
     }
@@ -225,13 +154,6 @@ public abstract class Message {
             length++;  // The assumption here is we never call adjustLength with the same arraySize as before.
         else if (newArraySize != 0)
             length += VarInt.sizeOf(newArraySize) - VarInt.sizeOf(newArraySize - 1);
-    }
-
-    /**
-     * used for unit testing
-     */
-    public boolean isParsed() {
-        return parsed;
     }
 
     /**
@@ -297,7 +219,7 @@ public abstract class Message {
             // Cannot happen, we are serializing to a memory stream.
         }
 
-        if (parseRetain) {
+        if (serializer.isParseRetainMode()) {
             // A free set of steak knives!
             // If there happens to be a call to this method we gain an opportunity to recache
             // the byte array and in this case it contains no bytes from parent messages.
@@ -353,17 +275,11 @@ public abstract class Message {
     }
 
     /**
-     * This should be overridden to extract correct message size in the case of lazy parsing.  Until this method is
-     * implemented in a subclass of ChildMessage lazy parsing may have no effect.
-     *
-     * This default implementation is a safe fall back that will ensure it returns a correct value by parsing the message.
+     * This returns a correct value by parsing the message.
      */
-    public int getMessageSize() {
-        if (length != UNKNOWN_LENGTH)
-            return length;
-        maybeParse();
+    public final int getMessageSize() {
         if (length == UNKNOWN_LENGTH)
-            checkState(false, "Length field has not been set in %s after full parse.", getClass().getSimpleName());
+            checkState(false, "Length field has not been set in %s.", getClass().getSimpleName());
         return length;
     }
 
@@ -445,15 +361,14 @@ public abstract class Message {
         return params;
     }
 
-    public static class LazyParseException extends RuntimeException {
-
-        public LazyParseException(String message, Throwable cause) {
-            super(message, cause);
+    /**
+     * Set the serializer for this message when deserialized by Java.
+     */
+    private void readObject(java.io.ObjectInputStream in)
+        throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        if (null != params) {
+            this.serializer = params.getDefaultSerializer();
         }
-
-        public LazyParseException(String message) {
-            super(message);
-        }
-
     }
 }

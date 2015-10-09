@@ -25,7 +25,6 @@ import com.google.common.base.Objects;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
@@ -116,33 +115,21 @@ public class TransactionInput extends ChildMessage {
      * @param params NetworkParameters object.
      * @param payload Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first payload byte within the array.
-     * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
-     * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
-     * If true and the backing byte array is invalidated due to modification of a field then 
-     * the cached bytes may be repopulated and retained if the message is serialized again in the future.
-     * as the length will be provided as part of the header.  If unknown then set to Message.UNKNOWN_LENGTH
+     * @param serializer the serializer to use for this message.
      * @throws ProtocolException
      */
-    public TransactionInput(NetworkParameters params, Transaction parentTransaction, byte[] payload, int offset,
-                            boolean parseLazy, boolean parseRetain)
+    public TransactionInput(NetworkParameters params, Transaction parentTransaction, byte[] payload, int offset, MessageSerializer serializer)
             throws ProtocolException {
-        super(params, payload, offset, parentTransaction, parseLazy, parseRetain, UNKNOWN_LENGTH);
+        super(params, payload, offset, parentTransaction, serializer, UNKNOWN_LENGTH);
         this.value = null;
     }
 
     @Override
-    protected void parseLite() throws ProtocolException {
-        int curs = cursor;
-        int scriptLen = (int) readVarInt(36);
-        length = cursor - offset + scriptLen + 4;
-        cursor = curs;
-    }
-
-    @Override
-    void parse() throws ProtocolException {
-        outpoint = new TransactionOutPoint(params, payload, cursor, this, parseLazy, parseRetain);
+    protected void parse() throws ProtocolException {
+        outpoint = new TransactionOutPoint(params, payload, cursor, this, serializer);
         cursor += outpoint.getMessageSize();
         int scriptLen = (int) readVarInt();
+        length = cursor - offset + scriptLen + 4;
         scriptBytes = readBytes(scriptLen);
         sequence = readUint32();
     }
@@ -159,7 +146,6 @@ public class TransactionInput extends ChildMessage {
      * Coinbase transactions have special inputs with hashes of zero. If this is such an input, returns true.
      */
     public boolean isCoinBase() {
-        maybeParse();
         return outpoint.getHash().equals(Sha256Hash.ZERO_HASH) &&
                 (outpoint.getIndex() & 0xFFFFFFFFL) == 0xFFFFFFFFL;  // -1 but all is serialized to the wire as unsigned int.
     }
@@ -173,7 +159,6 @@ public class TransactionInput extends ChildMessage {
         // parameter is overloaded to be something totally different.
         Script script = scriptSig == null ? null : scriptSig.get();
         if (script == null) {
-            maybeParse();
             script = new Script(scriptBytes);
             scriptSig = new WeakReference<Script>(script);
         }
@@ -209,7 +194,6 @@ public class TransactionInput extends ChildMessage {
      * feature is disabled so sequence numbers are unusable.
      */
     public long getSequenceNumber() {
-        maybeParse();
         return sequence;
     }
 
@@ -230,7 +214,6 @@ public class TransactionInput extends ChildMessage {
      * data needed to connect to the output of the transaction we're gathering coins from.
      */
     public TransactionOutPoint getOutpoint() {
-        maybeParse();
         return outpoint;
     }
 
@@ -241,7 +224,6 @@ public class TransactionInput extends ChildMessage {
      * @return the scriptBytes
      */
     public byte[] getScriptBytes() {
-        maybeParse();
         return scriptBytes;
     }
 

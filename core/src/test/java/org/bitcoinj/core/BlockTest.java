@@ -25,6 +25,7 @@ import org.junit.Test;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.EnumSet;
 
 import static org.bitcoinj.core.Utils.HEX;
 import static org.junit.Assert.*;
@@ -56,15 +57,15 @@ public class BlockTest {
 
     @Test
     public void testBlockVerification() throws Exception {
-        Block block = new Block(params, blockBytes);
-        block.verify();
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
+        block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
         assertEquals("00000000a6e5eb79dcec11897af55e90cd571a4335383a3ccfbc12ec81085935", block.getHashAsString());
     }
     
     @SuppressWarnings("deprecation")
     @Test
     public void testDate() throws Exception {
-        Block block = new Block(params, blockBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
         assertEquals("4 Nov 2010 16:06:04 GMT", block.getTime().toGMTString());
     }
 
@@ -72,10 +73,10 @@ public class BlockTest {
     public void testProofOfWork() throws Exception {
         // This params accepts any difficulty target.
         NetworkParameters params = UnitTestParams.get();
-        Block block = new Block(params, blockBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
         block.setNonce(12346);
         try {
-            block.verify();
+            block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
             fail();
         } catch (VerificationException e) {
             // Expected.
@@ -84,31 +85,31 @@ public class BlockTest {
         // from containing artificially weak difficulties.
         block.setDifficultyTarget(Block.EASIEST_DIFFICULTY_TARGET);
         // Now it should pass.
-        block.verify();
+        block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
         // Break the nonce again at the lower difficulty level so we can try solving for it.
         block.setNonce(1);
         try {
-            block.verify();
+            block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
             fail();
         } catch (VerificationException e) {
             // Expected to fail as the nonce is no longer correct.
         }
         // Should find an acceptable nonce.
         block.solve();
-        block.verify();
+        block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
         assertEquals(block.getNonce(), 2);
     }
 
     @Test
     public void testBadTransactions() throws Exception {
-        Block block = new Block(params, blockBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
         // Re-arrange so the coinbase transaction is not first.
         Transaction tx1 = block.transactions.get(0);
         Transaction tx2 = block.transactions.get(1);
         block.transactions.set(0, tx2);
         block.transactions.set(1, tx1);
         try {
-            block.verify();
+            block.verify(Block.BLOCK_HEIGHT_GENESIS, EnumSet.noneOf(VerificationFlags.class));
             fail();
         } catch (VerificationException e) {
             // We should get here.
@@ -117,9 +118,9 @@ public class BlockTest {
 
     @Test
     public void testHeaderParse() throws Exception {
-        Block block = new Block(params, blockBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
         Block header = block.cloneAsHeader();
-        Block reparsed = new Block(params, header.bitcoinSerialize());
+        Block reparsed = params.getDefaultSerializer().makeBlock(header.bitcoinSerialize());
         assertEquals(reparsed, header);
     }
 
@@ -129,14 +130,14 @@ public class BlockTest {
         // proves that transaction serialization works, along with all its subobjects like scripts and in/outpoints.
         //
         // NB: This tests the bitcoin serialization protocol.
-        Block block = new Block(params, blockBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockBytes);
         assertTrue(Arrays.equals(blockBytes, block.bitcoinSerialize()));
     }
     
     @Test
     public void testUpdateLength() {
         NetworkParameters params = UnitTestParams.get();
-        Block block = params.getGenesisBlock().createNextBlockWithCoinbase(new ECKey().getPubKey());
+        Block block = params.getGenesisBlock().createNextBlockWithCoinbase(Block.BLOCK_VERSION_GENESIS, new ECKey().getPubKey(), Block.BLOCK_HEIGHT_GENESIS);
         assertEquals(block.bitcoinSerialize().length, block.length);
         final int origBlockLen = block.length;
         Transaction tx = new Transaction(params);

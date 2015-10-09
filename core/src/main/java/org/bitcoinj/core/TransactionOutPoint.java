@@ -1,5 +1,6 @@
 /*
  * Copyright 2011 Google Inc.
+ * Copyright 2015 Andreas Schildbach
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,33 +81,18 @@ public class TransactionOutPoint extends ChildMessage {
      * Deserializes the message. This is usually part of a transaction message.
      * @param params NetworkParameters object.
      * @param offset The location of the first payload byte within the array.
-     * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
-     * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
-     * If true and the backing byte array is invalidated due to modification of a field then 
-     * the cached bytes may be repopulated and retained if the message is serialized again in the future.
+     * @param serializer the serializer to use for this message.
      * @throws ProtocolException
      */
-    public TransactionOutPoint(NetworkParameters params, byte[] payload, int offset, Message parent, boolean parseLazy, boolean parseRetain) throws ProtocolException {
-        super(params, payload, offset, parent, parseLazy, parseRetain, MESSAGE_LENGTH);
+    public TransactionOutPoint(NetworkParameters params, byte[] payload, int offset, Message parent, MessageSerializer serializer) throws ProtocolException {
+        super(params, payload, offset, parent, serializer, MESSAGE_LENGTH);
     }
 
     @Override
-    protected void parseLite() throws ProtocolException {
+    protected void parse() throws ProtocolException {
         length = MESSAGE_LENGTH;
-    }
-
-    @Override
-    void parse() throws ProtocolException {
         hash = readHash();
         index = readUint32();
-    }
-
-    /* (non-Javadoc)
-      * @see Message#getMessageSize()
-      */
-    @Override
-    public int getMessageSize() {
-        return MESSAGE_LENGTH;
     }
 
     @Override
@@ -200,7 +186,6 @@ public class TransactionOutPoint extends ChildMessage {
      */
     @Override
     public Sha256Hash getHash() {
-        maybeParse();
         return hash;
     }
 
@@ -209,7 +194,6 @@ public class TransactionOutPoint extends ChildMessage {
     }
 
     public long getIndex() {
-        maybeParse();
         return index;
     }
     

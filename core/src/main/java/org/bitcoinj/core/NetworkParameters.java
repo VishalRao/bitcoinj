@@ -35,6 +35,7 @@ import java.math.*;
 import java.util.*;
 
 import static org.bitcoinj.core.Coin.*;
+import org.bitcoinj.utils.VersionTally;
 
 /**
  * <p>NetworkParameters contains the data needed for working with an instantiation of a Bitcoin chain.</p>
@@ -87,6 +88,11 @@ public abstract class NetworkParameters {
     protected int bip32HeaderPub;
     protected int bip32HeaderPriv;
 
+    /** Used to check majorities for block version upgrade */
+    protected int majorityEnforceBlockUpgrade;
+    protected int majorityRejectBlockOutdated;
+    protected int majorityWindow;
+
     /**
      * See getId(). This may be null for old deserialized wallets. In that case we derive it heuristically
      * by looking at the port number.
@@ -104,6 +110,7 @@ public abstract class NetworkParameters {
     protected int[] addrSeeds;
     protected HttpDiscovery.Details[] httpSeeds = {};
     protected Map<Integer, Sha256Hash> checkpoints = new HashMap<Integer, Sha256Hash>();
+    protected transient MessageSerializer defaultSerializer = null;
 
     protected NetworkParameters() {
         alertSigningKey = SATOSHI_KEY;
@@ -111,7 +118,7 @@ public abstract class NetworkParameters {
     }
 
     private static Block createGenesis(NetworkParameters n) {
-        Block genesisBlock = new Block(n);
+        Block genesisBlock = new Block(n, Block.BLOCK_VERSION_GENESIS);
         Transaction t = new Transaction(n);
         try {
             // A script containing the difficulty bits and the following message:
@@ -417,4 +424,85 @@ public abstract class NetworkParameters {
      * networks.
      */
     public abstract boolean hasMaxMoney();
+
+    /**
+     * Return the default serializer for this network. This is a shared serializer.
+     * @return 
+     */
+    public final MessageSerializer getDefaultSerializer() {
+        // Construct a default serializer if we don't have one
+        if (null == this.defaultSerializer) {
+            // Don't grab a lock unless we absolutely need it
+            synchronized(this) {
+                // Now we have a lock, double check there's still no serializer
+                // and create one if so.
+                if (null == this.defaultSerializer) {
+                    // As the serializers are intended to be immutable, creating
+                    // two due to a race condition should not be a problem, however
+                    // to be safe we ensure only one exists for each network.
+                    this.defaultSerializer = getSerializer(false);
+                }
+            }
+        }
+        return defaultSerializer;
+    }
+
+    /**
+     * Construct and return a custom serializer.
+     */
+    public abstract BitcoinSerializer getSerializer(boolean parseRetain);
+
+    /**
+     * The number of blocks in the last {@link getMajorityWindow()} blocks
+     * at which to trigger a notice to the user to upgrade their client, where
+     * the client does not understand those blocks.
+     */
+    public int getMajorityEnforceBlockUpgrade() {
+        return majorityEnforceBlockUpgrade;
+    }
+
+    /**
+     * The number of blocks in the last {@link getMajorityWindow()} blocks
+     * at which to enforce the requirement that all new blocks are of the
+     * newer type (i.e. outdated blocks are rejected).
+     */
+    public int getMajorityRejectBlockOutdated() {
+        return majorityRejectBlockOutdated;
+    }
+
+    /**
+     * The sampling window from which the version numbers of blocks are taken
+     * in order to determine if a new block version is now the majority.
+     */
+    public int getMajorityWindow() {
+        return majorityWindow;
+    }
+
+    /**
+     * The flags indicating which block validation tests should be applied to
+     * the given block. Enables support for alternative blockchains which enable
+     * tests based on different criteria.
+     * 
+     * @param block block to determine flags for.
+     * @param height height of the block, if known, null otherwise. Returned
+     * tests should be a safe subset if block height is unknown.
+     */
+    public EnumSet<VerificationFlags> getValidationFlags(final Block block,
+            final VersionTally tally, final Integer height) {
+        final EnumSet<VerificationFlags> flags = EnumSet.noneOf(VerificationFlags.class);
+
+        if (block.getVersion() >= Block.BLOCK_VERSION_BIP34) {
+            final Integer count = tally.getCountAtOrAbove(Block.BLOCK_VERSION_BIP34);
+            if (null != count && count >= getMajorityEnforceBlockUpgrade()) {
+                flags.add(VerificationFlags.HEIGHT_IN_COINBASE);
+            }
+        }
+        if (block.getVersion() >= Block.BLOCK_VERSION_BIP66) {
+            final Integer count = tally.getCountAtOrAbove(Block.BLOCK_VERSION_BIP66);
+            if (null != count && count >= getMajorityEnforceBlockUpgrade()) {
+                flags.add(VerificationFlags.DER_SIGNATURE_FORMAT);
+            }
+        }
+        return flags;
+    }
 }

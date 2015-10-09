@@ -1,5 +1,6 @@
 /*
  * Copyright 2011 Google Inc.
+ * Copyright 2015 Andreas Schildbach
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +41,7 @@ public class PeerAddress extends ChildMessage {
     static final int MESSAGE_SIZE = 30;
 
     private InetAddress addr;
+    private String hostname; // Used for .onion addresses
     private int port;
     private BigInteger services;
     private long time;
@@ -57,20 +59,12 @@ public class PeerAddress extends ChildMessage {
      * @param payload Bitcoin protocol formatted byte array containing message content.
      * @param offset The location of the first payload byte within the array.
      * @param protocolVersion Bitcoin protocol version.
-     * @param parseLazy Whether to perform a full parse immediately or delay until a read is requested.
-     * @param parseRetain Whether to retain the backing byte array for quick reserialization.  
-     * If true and the backing byte array is invalidated due to modification of a field then 
-     * the cached bytes may be repopulated and retained if the message is serialized again in the future.
+     * @param serializer the serializer to use for this message.
      * @throws ProtocolException
      */
-    public PeerAddress(NetworkParameters params, byte[] payload, int offset, int protocolVersion, Message parent, boolean parseLazy,
-                       boolean parseRetain) throws ProtocolException {
-        super(params, payload, offset, protocolVersion, parent, parseLazy, parseRetain, UNKNOWN_LENGTH);
-        // Message length is calculated in parseLite which is guaranteed to be called before it is ever read.
-        // Even though message length is static for a PeerAddress it is safer to leave it there 
-        // as it will be set regardless of which constructor was used.
+    public PeerAddress(NetworkParameters params, byte[] payload, int offset, int protocolVersion, Message parent, MessageSerializer serializer) throws ProtocolException {
+        super(params, payload, offset, protocolVersion, parent, serializer, UNKNOWN_LENGTH);
     }
-
 
     /**
      * Construct a peer address from a memorized or hardcoded address.
@@ -97,8 +91,22 @@ public class PeerAddress extends ChildMessage {
         this(addr, MainNetParams.get().getPort());
     }
 
+    /**
+     * Constructs a peer address from an {@link InetSocketAddress}. An InetSocketAddress can take in as parameters an
+     * InetAddress or a String hostname. If you want to connect to a .onion, set the hostname to the .onion address.
+     */
     public PeerAddress(InetSocketAddress addr) {
         this(addr.getAddress(), addr.getPort());
+    }
+
+    /**
+     * Constructs a peer address from a stringified hostname+port. Use this if you want to connect to a Tor .onion address.
+     */
+    public PeerAddress(String hostname, int port) {
+        this.hostname = hostname;
+        this.port = port;
+        this.protocolVersion = NetworkParameters.PROTOCOL_VERSION;
+        this.services = BigInteger.ZERO;
     }
 
     public static PeerAddress localhost(NetworkParameters params) {
@@ -131,11 +139,6 @@ public class PeerAddress extends ChildMessage {
     }
 
     @Override
-    protected void parseLite() {
-        length = protocolVersion > 31402 ? MESSAGE_SIZE : MESSAGE_SIZE - 4;
-    }
-
-    @Override
     protected void parse() throws ProtocolException {
         // Format of a serialized address:
         //   uint32 timestamp
@@ -154,17 +157,15 @@ public class PeerAddress extends ChildMessage {
             throw new RuntimeException(e);  // Cannot happen.
         }
         port = ((0xFF & payload[cursor++]) << 8) | (0xFF & payload[cursor++]);
-    }
-
-    @Override
-    public int getMessageSize() {
         // The 4 byte difference is the uint32 timestamp that was introduced in version 31402 
         length = protocolVersion > 31402 ? MESSAGE_SIZE : MESSAGE_SIZE - 4;
-        return length;
+    }
+
+    public String getHostname() {
+        return hostname;
     }
 
     public InetAddress getAddr() {
-        maybeParse();
         return addr;
     }
 
@@ -177,45 +178,38 @@ public class PeerAddress extends ChildMessage {
         this.addr = addr;
     }
 
-
     public int getPort() {
-        maybeParse();
         return port;
     }
-
 
     public void setPort(int port) {
         unCache();
         this.port = port;
     }
 
-
     public BigInteger getServices() {
-        maybeParse();
         return services;
     }
-
 
     public void setServices(BigInteger services) {
         unCache();
         this.services = services;
     }
 
-
     public long getTime() {
-        maybeParse();
         return time;
     }
-
 
     public void setTime(long time) {
         unCache();
         this.time = time;
     }
 
-
     @Override
     public String toString() {
+        if (hostname != null) {
+            return "[" + hostname + "]:" + port;
+        }
         return "[" + addr.getHostAddress() + "]:" + port;
     }
 
@@ -234,6 +228,11 @@ public class PeerAddress extends ChildMessage {
     }
     
     public InetSocketAddress toSocketAddress() {
-        return new InetSocketAddress(addr, port);
+        // Reconstruct the InetSocketAddress properly
+        if (hostname != null) {
+            return InetSocketAddress.createUnresolved(hostname, port);
+        } else {
+            return new InetSocketAddress(addr, port);
+        }
     }
 }

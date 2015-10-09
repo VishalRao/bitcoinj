@@ -750,7 +750,7 @@ public class Script {
     }
 
     public boolean isOpReturn() {
-        return chunks.size() == 2 && chunks.get(0).equalsOpCode(OP_RETURN);
+        return chunks.size() > 0 && chunks.get(0).equalsOpCode(OP_RETURN);
     }
 
     /**
@@ -1022,7 +1022,7 @@ public class Script {
                 case OP_EQUAL:
                     if (stack.size() < 2)
                         throw new ScriptException("Attempted OP_EQUALVERIFY on a stack with size < 2");
-                    stack.add(Arrays.equals(stack.pollLast(), stack.pollLast()) ? new byte[] {1} : new byte[] {0});
+                    stack.add(Arrays.equals(stack.pollLast(), stack.pollLast()) ? new byte[] {1} : new byte[] {});
                     break;
                 case OP_EQUALVERIFY:
                     if (stack.size() < 2)
@@ -1301,7 +1301,7 @@ public class Script {
         }
 
         if (opcode == OP_CHECKSIG)
-            stack.add(sigValid ? new byte[] {1} : new byte[] {0});
+            stack.add(sigValid ? new byte[] {1} : new byte[] {});
         else if (opcode == OP_CHECKSIGVERIFY)
             if (!sigValid)
                 throw new ScriptException("Script failed OP_CHECKSIGVERIFY");
@@ -1378,7 +1378,7 @@ public class Script {
             throw new ScriptException("OP_CHECKMULTISIG(VERIFY) with non-null nulldummy: " + Arrays.toString(nullDummy));
 
         if (opcode == OP_CHECKMULTISIG) {
-            stack.add(valid ? new byte[] {1} : new byte[] {0});
+            stack.add(valid ? new byte[] {1} : new byte[] {});
         } else if (opcode == OP_CHECKMULTISIGVERIFY) {
             if (!valid)
                 throw new ScriptException("Script failed OP_CHECKMULTISIGVERIFY");
@@ -1413,7 +1413,7 @@ public class Script {
         // Clone the transaction because executing the script involves editing it, and if we die, we'll leave
         // the tx half broken (also it's not so thread safe to work on it directly.
         try {
-            txContainingThis = new Transaction(txContainingThis.getParams(), txContainingThis.bitcoinSerialize());
+            txContainingThis = txContainingThis.getParams().getDefaultSerializer().makeTransaction(txContainingThis.bitcoinSerialize());
         } catch (ProtocolException e) {
             throw new RuntimeException(e);   // Should not happen unless we were given a totally broken transaction.
         }

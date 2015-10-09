@@ -26,6 +26,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.util.EnumSet;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -59,11 +60,11 @@ public class CoinbaseBlockTest {
         byte[] blockAsBytes = getBytes(getClass().getResourceAsStream("block169482.dat"));
 
         // Create block 169482.
-        Block block = new Block(params, blockAsBytes);
+        Block block = params.getDefaultSerializer().makeBlock(blockAsBytes);
 
         // Check block.
         assertNotNull(block);
-        block.verify();
+        block.verify(169482, EnumSet.noneOf(VerificationFlags.class));
         assertEquals(BLOCK_NONCE, block.getNonce());
 
         StoredBlock storedBlock = new StoredBlock(block, BigInteger.ONE, BLOCK_OF_INTEREST); // Nonsense work - not used in test.
